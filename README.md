@@ -19,7 +19,7 @@ To install the ALTCHA Elixir Library, add it to your `mix.exs` dependencies:
 ```elixir
 defp deps do
   [
-    {:altcha, "~> 0.1"}
+    {:altcha, "~> 0.2"}
   ]
 end
 ```

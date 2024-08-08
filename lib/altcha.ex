@@ -52,6 +52,12 @@ defmodule Altcha do
       :signature
     ]
 
+    defimpl Jason.Encoder do
+      def encode(challenge, _) do
+        Challenge.to_json(challenge)
+      end
+    end
+
     @doc """
     Converts a `Challenge` struct to JSON.
     """
@@ -89,6 +95,12 @@ defmodule Altcha do
       # Signature for the challenge
       :signature
     ]
+
+    defimpl Jason.Encoder do
+      def encode(payload, _) do
+        Payload.to_json(payload)
+      end
+    end
 
     @doc """
     Converts a `Payload` struct to JSON.
@@ -147,6 +159,12 @@ defmodule Altcha do
       # Flag indicating if the signature is verified
       :verified
     ]
+
+    defimpl Jason.Encoder do
+      def encode(signature_payload, _) do
+        ServerSignaturePayload.to_json(signature_payload)
+      end
+    end
 
     @doc """
     Converts a `ServerSignaturePayload` struct to JSON.
@@ -220,6 +238,12 @@ defmodule Altcha do
       :verified
     ]
 
+    defimpl Jason.Encoder do
+      def encode(verification_data, _) do
+        ServerSignatureVerificationData.to_json(verification_data)
+      end
+    end
+
     @doc """
     Converts a `ServerSignatureVerificationData` struct to JSON.
     """
@@ -269,6 +293,9 @@ defmodule Altcha do
           {"fields", fields} ->
             {:fields, String.split(fields, ",")}
 
+          {"fieldsHash", fields_hash} ->
+            {:fields_hash, fields_hash}
+
           {"reasons", reasons} ->
             {:reasons, String.split(reasons, ",")}
 
@@ -279,6 +306,9 @@ defmodule Altcha do
           {"time", n} ->
             value = if is_integer(n), do: n, else: String.to_integer(n)
             {:time, value}
+
+          {"verified", verified} ->
+            {:verified, verified === "true"}
 
           {k, v} ->
             {String.to_atom(k), v}
@@ -314,14 +344,21 @@ defmodule Altcha do
     :rand.uniform(max + 1) - 1
   end
 
+  @spec algorithm_from_binary(any()) :: any()
   @doc """
   Converts an algorithm name from binary format to an atom.
   """
   def algorithm_from_binary(algorithm) do
     case algorithm do
-      @algorithm_sha -> :sha
-      @algorithm_sha256 -> :sha256
-      @algorithm_sha512 -> :sha512
+      @algorithm_sha ->
+        :sha
+
+      @algorithm_sha256 ->
+        :sha256
+
+      @algorithm_sha512 ->
+        :sha512
+
       _ ->
         if is_atom(algorithm), do: algorithm, else: String.to_atom(algorithm)
     end
@@ -332,9 +369,15 @@ defmodule Altcha do
   """
   def algorithm_to_binary(algorithm) do
     case algorithm do
-      :sha -> @algorithm_sha
-      :sha256 -> @algorithm_sha256
-      :sha512 -> @algorithm_sha512
+      :sha ->
+        @algorithm_sha
+
+      :sha256 ->
+        @algorithm_sha256
+
+      :sha512 ->
+        @algorithm_sha512
+
       _ ->
         if is_atom(algorithm), do: algorithm, else: Atom.to_string(algorithm)
     end
@@ -405,16 +448,17 @@ defmodule Altcha do
 
     params =
       if expires do
+        time = if is_binary(expires), do: expires, else: Integer.to_string(expires)
         Map.put(
           params,
           "expires",
-          Integer.to_string(DateTime.to_unix(DateTime.utc_now(), :second))
+          time
         )
       else
         params
       end
 
-    salt = salt || random_bytes(salt_length) |> Base.encode16()
+    salt = salt || random_bytes(salt_length) |> Base.encode16() |> String.downcase()
 
     salt =
       if params != %{} do
@@ -515,13 +559,28 @@ defmodule Altcha do
     if server_verification_payload_is_valid?(payload) do
       hash_data = hash(payload.verification_data, payload.algorithm)
       expected_signature = hmac_hex(hash_data, payload.algorithm, hmac_key)
-      payload.signature == expected_signature
+
+      verification_data =
+        ServerSignatureVerificationData.from_json(
+          Jason.encode!(URI.decode_query(payload.verification_data))
+        )
+
+      now = DateTime.to_unix(DateTime.utc_now(), :second)
+
+      is_verified =
+        payload.verified &&
+          verification_data.verified == true &&
+          (verification_data.expire == nil || verification_data.expire > now) &&
+          payload.signature == expected_signature
+
+      {is_verified, verification_data}
     else
-      false
+      {false, nil}
     end
-  rescue
-    ArgumentError -> false
-    Jason.DecodeError -> false
+
+    # rescue
+    #   ArgumentError -> { false, nil }
+    #   Jason.DecodeError -> { false, nil }
   end
 
   @doc """

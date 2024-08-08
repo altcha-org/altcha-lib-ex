@@ -7,7 +7,6 @@ defmodule AltchaTest do
     Challenge,
     Payload,
     ServerSignaturePayload,
-    ServerSignatureVerificationData,
     ChallengeOptions
   }
 
@@ -170,7 +169,7 @@ defmodule AltchaTest do
         salt_length: 16,
         hmac_key: @valid_hmac_key,
         number: 123,
-        expires: true
+        expires: DateTime.to_unix(DateTime.utc_now(), :second) + 600
       }
 
       challenge = Altcha.create_challenge(options)
@@ -231,14 +230,14 @@ defmodule AltchaTest do
       payload =
         %ServerSignaturePayload{
           algorithm: "SHA-256",
-          verification_data: "data",
-          signature: Altcha.hmac_hex(Altcha.hash("data", :sha256), :sha256, @valid_hmac_key),
+          verification_data: "verified=true",
+          signature: Altcha.hmac_hex(Altcha.hash("verified=true", :sha256), :sha256, @valid_hmac_key),
           verified: true
         }
         |> ServerSignaturePayload.to_json()
         |> Base.encode64()
 
-      assert Altcha.verify_server_signature(payload, @valid_hmac_key)
+      assert { true, _ } = Altcha.verify_server_signature(payload, @valid_hmac_key)
     end
 
     test "returns false for invalid server signature" do
@@ -252,7 +251,7 @@ defmodule AltchaTest do
         |> Jason.encode!()
         |> Base.encode64()
 
-      refute Altcha.verify_server_signature(invalid_payload, @valid_hmac_key)
+      assert { false, _ } = Altcha.verify_server_signature(invalid_payload, @valid_hmac_key)
     end
   end
 
