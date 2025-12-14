@@ -449,6 +449,7 @@ defmodule Altcha do
     params =
       if expires do
         time = if is_binary(expires), do: expires, else: Integer.to_string(expires)
+
         Map.put(
           params,
           "expires",
@@ -465,6 +466,14 @@ defmodule Altcha do
         salt <> "?#{URI.encode_query(params)}"
       else
         salt
+      end
+
+    # Add a delimiter to prevent parameter splicing
+    salt =
+      if String.ends_with?(salt, "&") do
+        salt
+      else
+        salt <> "&"
       end
 
     number = number || random_int(max_number)

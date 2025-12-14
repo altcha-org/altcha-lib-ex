@@ -223,6 +223,30 @@ defmodule AltchaTest do
 
       refute Altcha.verify_solution(invalid_payload, @valid_hmac_key)
     end
+
+    test "returns false for invalid payload with salt splicing" do
+      challenge_options = %ChallengeOptions{
+        algorithm: :sha256,
+        number: 123,
+        salt_length: 16,
+        hmac_key: @valid_hmac_key
+      }
+
+      challenge = Altcha.create_challenge(challenge_options)
+
+      payload =
+        %Payload{
+          algorithm: challenge.algorithm,
+          challenge: challenge.challenge,
+          number: 23,
+          salt: challenge.salt <> "1",
+          signature: challenge.signature
+        }
+        |> Payload.to_json()
+        |> Base.encode64()
+
+      refute Altcha.verify_solution(payload, @valid_hmac_key)
+    end
   end
 
   describe "verify_server_signature/2" do
@@ -231,13 +255,14 @@ defmodule AltchaTest do
         %ServerSignaturePayload{
           algorithm: "SHA-256",
           verification_data: "verified=true",
-          signature: Altcha.hmac_hex(Altcha.hash("verified=true", :sha256), :sha256, @valid_hmac_key),
+          signature:
+            Altcha.hmac_hex(Altcha.hash("verified=true", :sha256), :sha256, @valid_hmac_key),
           verified: true
         }
         |> ServerSignaturePayload.to_json()
         |> Base.encode64()
 
-      assert { true, _ } = Altcha.verify_server_signature(payload, @valid_hmac_key)
+      assert {true, _} = Altcha.verify_server_signature(payload, @valid_hmac_key)
     end
 
     test "returns false for invalid server signature" do
@@ -251,7 +276,7 @@ defmodule AltchaTest do
         |> Jason.encode!()
         |> Base.encode64()
 
-      assert { false, _ } = Altcha.verify_server_signature(invalid_payload, @valid_hmac_key)
+      assert {false, _} = Altcha.verify_server_signature(invalid_payload, @valid_hmac_key)
     end
   end
 
