@@ -1,0 +1,47 @@
+name: Publish to Hex.pm
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-${{ hashFiles('mix.lock') }}
+          restore-keys: deps-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Check version matches tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          MIX_VERSION=$(awk -F'"' '/version:/{print $2; exit}' mix.exs)
+          if [ "$TAG" != "$MIX_VERSION" ]; then
+            echo "Tag ($TAG) does not match mix.exs version ($MIX_VERSION)"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: mix test
+        env:
+          MIX_ENV: test
+
+      - name: Publish to Hex.pm
+        run: mix hex.publish --yes
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
