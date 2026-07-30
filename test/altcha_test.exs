@@ -717,6 +717,52 @@ defmodule AltchaTest do
         assert result.verified == true
         assert result.invalid_solution == false
       end
+
+      test "fallback verification enforces key_prefix" do
+        # Regression test: the fallback verification path (no key signature) must reject
+        # a solution whose derived key is genuinely correct for its counter but does not
+        # satisfy the challenge's key_prefix. Previously only
+        # `derived_key == derive_fn(counter)` was checked, letting a client submit any
+        # counter after a single KDF execution and skip the prefix search entirely.
+
+        # Learn the honest KDF output for counter 0 with exactly one hash computation: a
+        # challenge with key_prefix "" matches immediately, no search needed.
+        probe =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 10,
+            key_prefix: "",
+            hmac_signature_secret: @hmac_secret
+          })
+
+        honest = V2.solve_challenge(%SolveChallengeOptions{challenge: probe})
+
+        # Pick a key_prefix the honest key is guaranteed not to satisfy: a byte can't be
+        # both 0x00 and 0xff.
+        mismatched_prefix =
+          if String.starts_with?(honest.derived_key, "00"), do: "ff", else: "00"
+
+        tampered_params = %{probe.parameters | key_prefix: mismatched_prefix}
+
+        tampered_signature =
+          :crypto.mac(:hmac, :sha256, @hmac_secret, V2.canonical_json(tampered_params))
+          |> Base.encode16()
+          |> String.downcase()
+
+        signed = %{probe | parameters: tampered_params, signature: tampered_signature}
+
+        # Submit the honestly-derived key/counter pair (one KDF execution, no prefix
+        # search) against the challenge whose signed key_prefix it does not satisfy.
+        result =
+          V2.verify_solution(%VerifySolutionOptions{
+            challenge: signed,
+            solution: honest,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        refute result.verified, "solution violating key_prefix must not verify"
+        assert result.invalid_solution == true
+      end
     end
 
     describe "decode_payload/1" do

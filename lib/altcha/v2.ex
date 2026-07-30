@@ -707,7 +707,9 @@ defmodule Altcha.V2 do
       expected_key = derive_fn.(challenge.parameters, salt_bytes, password)
       expected_key_hex = Base.encode16(expected_key, case: :lower)
 
-      valid = constant_time_equal?(expected_key_hex, solution.derived_key)
+      key_matches = constant_time_equal?(expected_key_hex, solution.derived_key)
+      prefix_matches = String.starts_with?(expected_key_hex, challenge.parameters.key_prefix)
+      valid = key_matches and prefix_matches
 
       %VerifySolutionResult{
         expired: false,
