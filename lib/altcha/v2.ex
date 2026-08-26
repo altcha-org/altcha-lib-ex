@@ -379,7 +379,8 @@ defmodule Altcha.V2 do
         password = password_buffer(nonce_bytes, options.counter, counter_mode)
         derived_key = derive_fn.(parameters, salt_bytes, password)
 
-        prefix_hex = derived_key |> binary_part(0, key_prefix_length) |> Base.encode16(case: :lower)
+        prefix_hex =
+          derived_key |> binary_part(0, key_prefix_length) |> Base.encode16(case: :lower)
 
         {%{parameters | key_prefix: prefix_hex}, derived_key}
       else
@@ -496,7 +497,12 @@ defmodule Altcha.V2 do
           verified: false
         }
 
-      not signature_valid?(hmac_algorithm, challenge.parameters, challenge.signature, options.hmac_signature_secret) ->
+      not signature_valid?(
+        hmac_algorithm,
+        challenge.parameters,
+        challenge.signature,
+        options.hmac_signature_secret
+      ) ->
         %VerifySolutionResult{
           expired: false,
           invalid_signature: true,
@@ -661,7 +667,13 @@ defmodule Altcha.V2 do
   # Private
   # ---------------------------------------------------------------------------
 
-  defp sign_challenge(hmac_algorithm, parameters, derived_key, hmac_signature_secret, hmac_key_signature_secret) do
+  defp sign_challenge(
+         hmac_algorithm,
+         parameters,
+         derived_key,
+         hmac_signature_secret,
+         hmac_key_signature_secret
+       ) do
     parameters =
       if derived_key && hmac_key_signature_secret do
         key_sig = do_hmac_hex(derived_key, hmac_algorithm, hmac_key_signature_secret)
@@ -685,7 +697,10 @@ defmodule Altcha.V2 do
     if challenge.parameters.key_signature && options.hmac_key_signature_secret do
       # Fast path: verify HMAC of the derived key
       derived_key_bytes = Base.decode16!(solution.derived_key, case: :mixed)
-      expected_key_sig = do_hmac_hex(derived_key_bytes, hmac_algorithm, options.hmac_key_signature_secret)
+
+      expected_key_sig =
+        do_hmac_hex(derived_key_bytes, hmac_algorithm, options.hmac_key_signature_secret)
+
       valid = constant_time_equal?(challenge.parameters.key_signature, expected_key_sig)
 
       %VerifySolutionResult{
@@ -749,9 +764,14 @@ defmodule Altcha.V2 do
 
   defp encode_canonical_value(v), do: Jason.encode!(v)
 
-  defp do_hmac_hex(data, :sha256, key), do: :crypto.mac(:hmac, :sha256, key, data) |> Base.encode16() |> String.downcase()
-  defp do_hmac_hex(data, :sha384, key), do: :crypto.mac(:hmac, :sha384, key, data) |> Base.encode16() |> String.downcase()
-  defp do_hmac_hex(data, :sha512, key), do: :crypto.mac(:hmac, :sha512, key, data) |> Base.encode16() |> String.downcase()
+  defp do_hmac_hex(data, :sha256, key),
+    do: :crypto.mac(:hmac, :sha256, key, data) |> Base.encode16() |> String.downcase()
+
+  defp do_hmac_hex(data, :sha384, key),
+    do: :crypto.mac(:hmac, :sha384, key, data) |> Base.encode16() |> String.downcase()
+
+  defp do_hmac_hex(data, :sha512, key),
+    do: :crypto.mac(:hmac, :sha512, key, data) |> Base.encode16() |> String.downcase()
 
   defp constant_time_equal?(a, b) when byte_size(a) != byte_size(b), do: false
 

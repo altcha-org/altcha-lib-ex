@@ -11,6 +11,7 @@ defmodule Altcha.MixProject do
       description: description(),
       package: package(),
       deps: deps(),
+      docs: docs(),
       name: "Altcha",
       source_url: "https://github.com/altcha-org/altcha-lib-ex"
     ]
@@ -24,10 +25,19 @@ defmodule Altcha.MixProject do
     [
       name: "altcha",
       licenses: ["MIT"],
+      files: ~w(lib guides .formatter.exs mix.exs README.md CHANGELOG.md LICENSE.txt),
       links: %{
         "GitHub" => "https://github.com/altcha-org/altcha-lib-ex",
         "Web" => "https://altcha.org"
       }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md", "guides/phoenix.md", "CHANGELOG.md"],
+      groups_for_extras: [Guides: ~r"guides/"]
     ]
   end
 
@@ -42,6 +52,7 @@ defmodule Altcha.MixProject do
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
       {:jason, "~> 1.4"},
+      {:plug, "~> 1.16", optional: true},
       {:ex_doc, "~> 0.39", only: :dev, runtime: false}
     ]
   end

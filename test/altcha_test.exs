@@ -263,7 +263,11 @@ defmodule AltchaTest do
             algorithm: "SHA-256",
             verification_data: "verified=true",
             signature:
-              Altcha.V1.hmac_hex(Altcha.V1.hash("verified=true", :sha256), :sha256, @valid_hmac_key),
+              Altcha.V1.hmac_hex(
+                Altcha.V1.hash("verified=true", :sha256),
+                :sha256,
+                @valid_hmac_key
+              ),
             verified: true
           }
           |> ServerSignaturePayload.to_json()
@@ -338,7 +342,15 @@ defmodule AltchaTest do
     use ExUnit.Case, async: true
 
     alias Altcha.V2
-    alias Altcha.V2.{Challenge, ChallengeParameters, Solution, CreateChallengeOptions, SolveChallengeOptions, VerifySolutionOptions}
+
+    alias Altcha.V2.{
+      Challenge,
+      ChallengeParameters,
+      Solution,
+      CreateChallengeOptions,
+      SolveChallengeOptions,
+      VerifySolutionOptions
+    }
 
     @hmac_secret "test_secret"
 
@@ -528,11 +540,12 @@ defmodule AltchaTest do
 
     describe "solve_challenge/1" do
       test "solves SHA challenge" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
 
         solution =
           V2.solve_challenge(%SolveChallengeOptions{
@@ -547,11 +560,12 @@ defmodule AltchaTest do
       end
 
       test "solves PBKDF2 challenge" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "PBKDF2/SHA-256",
-          cost: 1000,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "PBKDF2/SHA-256",
+            cost: 1000,
+            hmac_signature_secret: @hmac_secret
+          })
 
         solution =
           V2.solve_challenge(%SolveChallengeOptions{
@@ -589,11 +603,12 @@ defmodule AltchaTest do
 
     describe "verify_solution/1" do
       test "verifies valid solution end-to-end" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
 
         solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
 
@@ -611,12 +626,13 @@ defmodule AltchaTest do
       end
 
       test "returns expired when challenge has passed expiration" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1,
-          expires_at: 1,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            expires_at: 1,
+            hmac_signature_secret: @hmac_secret
+          })
 
         solution = %Altcha.V2.Solution{counter: 0, derived_key: "00"}
 
@@ -632,10 +648,11 @@ defmodule AltchaTest do
       end
 
       test "returns invalid_signature when challenge is unsigned" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1
+          })
 
         result =
           V2.verify_solution(%VerifySolutionOptions{
@@ -649,11 +666,12 @@ defmodule AltchaTest do
       end
 
       test "returns invalid_signature when signature is tampered" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
 
         tampered = %{challenge | signature: String.duplicate("0", 64)}
 
@@ -669,11 +687,12 @@ defmodule AltchaTest do
       end
 
       test "returns invalid_solution for wrong counter" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
 
         solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
 
@@ -767,11 +786,12 @@ defmodule AltchaTest do
 
     describe "decode_payload/1" do
       test "decodes Base64-encoded JSON payload" do
-        challenge = V2.create_challenge(%CreateChallengeOptions{
-          algorithm: "SHA-256",
-          cost: 1,
-          hmac_signature_secret: @hmac_secret
-        })
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
 
         solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
 
@@ -791,7 +811,9 @@ defmodule AltchaTest do
       test "verifies fields hash correctly" do
         form_data = %{"field1" => "value1", "field2" => "value2"}
         fields = ["field1", "field2"]
-        fields_hash = :crypto.hash(:sha256, "value1\nvalue2") |> Base.encode16() |> String.downcase()
+
+        fields_hash =
+          :crypto.hash(:sha256, "value1\nvalue2") |> Base.encode16() |> String.downcase()
 
         assert V2.verify_fields_hash(form_data, fields, fields_hash, "SHA-256")
       end
