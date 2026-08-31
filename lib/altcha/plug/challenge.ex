@@ -4,7 +4,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     A `Plug` that serves a freshly signed ALTCHA v2 proof-of-work challenge as JSON.
 
     Mount it wherever you want the challenge endpoint to live and point the ALTCHA
-    widget's `challengeurl` at the same path.
+    widget's `challenge` at the same path.
 
     This plug only handles `GET` requests; any other method passes through
     untouched, so it is safe to place in a shared pipeline.
@@ -45,7 +45,7 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     On the client:
 
-        <altcha-widget challengeurl="/altcha/challenge"></altcha-widget>
+        <altcha-widget challenge="/altcha/challenge"></altcha-widget>
 
     See the [Phoenix integration guide](phoenix.html) for the full picture.
     """
