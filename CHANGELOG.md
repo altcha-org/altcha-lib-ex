@@ -10,7 +10,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - `Altcha.Plug.Challenge` — a `Plug` that serves a freshly signed ALTCHA v2
-  proof-of-work challenge as JSON, so the widget's `challengeurl` can point straight
+  proof-of-work challenge as JSON, so the widget's `challenge` attribute can point straight
   at your app. Requires the new optional `:plug` dependency; nothing changes for
   non-Plug users.
 - A [Phoenix integration guide](guides/phoenix.md) covering widget loading, the
@@ -27,7 +27,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - `Altcha.V2` — key-derivation-based challenges (`PBKDF2`, iterative `SHA`) with
-  tunable cost, for the ALTCHA widget v2.
+  tunable cost, for the ALTCHA widget v3.
 
 ### Changed
 

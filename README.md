@@ -29,8 +29,8 @@ The library supports two proof-of-work versions:
 
 | Module | Algorithm | Use with |
 |--------|-----------|----------|
-| `Altcha.V1` | Hash-based (`SHA-256` etc.) | ALTCHA widget v1 |
-| `Altcha.V2` | Key-derivation-based (`PBKDF2`, iterative `SHA`) | ALTCHA widget v2 |
+| `Altcha.V1` | Hash-based (`SHA-256` etc.) | ALTCHA widget v1 and v2 (still accepted by v3) |
+| `Altcha.V2` | Key-derivation-based (`PBKDF2`, iterative `SHA`) | ALTCHA widget v3 |
 
 The top-level `Altcha` module delegates to `Altcha.V1` for backward compatibility.
 

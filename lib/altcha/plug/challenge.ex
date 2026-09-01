@@ -4,7 +4,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     A `Plug` that serves a freshly signed ALTCHA v2 proof-of-work challenge as JSON.
 
     Mount it wherever you want the challenge endpoint to live and point the ALTCHA
-    widget's `challengeurl` at the same path.
+    widget's `challenge` attribute at the same path.
 
     This plug only handles `GET` requests; any other method passes through
     untouched, so it is safe to place in a shared pipeline.
@@ -13,8 +13,9 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     Options given where the plug is mounted take precedence over application config:
 
+        # config/runtime.exs
         config :altcha, Altcha.Plug.Challenge,
-          hmac_signature_secret: {System, :fetch_env!, ["ALTCHA_HMAC_SECRET"]}
+          hmac_signature_secret: System.fetch_env!("ALTCHA_HMAC_SECRET")
 
     ### Options
 
@@ -43,9 +44,18 @@ if Code.ensure_loaded?(Plug.Conn) do
 
         plug Altcha.Plug.Challenge, cost: 50_000
 
+    > #### Config read at init time {: .info}
+    >
+    > `Plug.Builder` initialises plugs at **compile** time by default, so a secret
+    > coming from `config/runtime.exs` is not yet available when `init/1` runs in a
+    > pipeline. Pass it inline, build the pipeline with `init_mode: :runtime`, or set
+    > the key in a compile-time config file to a function/MFA value, which is then
+    > resolved on every request. A Phoenix router `forward` calls `init/1` per
+    > request, so runtime config works there as-is.
+
     On the client:
 
-        <altcha-widget challengeurl="/altcha/challenge"></altcha-widget>
+        <altcha-widget challenge="/altcha/challenge"></altcha-widget>
 
     See the [Phoenix integration guide](phoenix.html) for the full picture.
     """

@@ -4,8 +4,9 @@ This guide wires the [ALTCHA](https://altcha.org) widget into a Phoenix app: loa
 the widget script, serve proof-of-work challenges with `Altcha.Plug.Challenge`, and
 verify the submitted solution on the server.
 
-It uses the v2 API (`Altcha.V2`). For the older widget, the same shape applies with
-`Altcha.V1`.
+It uses the v2 API (`Altcha.V2`) — the key-derivation proof-of-work introduced with
+widget **v3**. Widget v1 and v2 use the older hash-based challenge; the same shape
+applies with `Altcha.V1`, which widget v3 still accepts.
 
 ## 1. Install
 
@@ -86,10 +87,14 @@ challenge as JSON and ignores every other method.
 
 ```elixir
 # lib/my_app_web/router.ex
-scope "/altcha", MyAppWeb do
+scope "/altcha" do
   forward "/challenge", Altcha.Plug.Challenge
 end
 ```
+
+Use a scope **without** an alias. Phoenix expands the forwarded plug against the
+scope's alias, so `scope "/altcha", MyAppWeb` would look for
+`MyAppWeb.Altcha.Plug.Challenge`.
 
 Options can be passed inline and override the application config, e.g.
 `forward "/challenge", Altcha.Plug.Challenge, cost: 50_000`. See
@@ -99,16 +104,29 @@ Point the widget at that path:
 
 ```heex
 <form phx-submit="submit">
-  <altcha-widget challengeurl={~p"/altcha/challenge"}></altcha-widget>
-  <input type="hidden" name="altcha" id="altcha-token-input" />
+  <div id="altcha" phx-update="ignore">
+    <altcha-widget challenge={~p"/altcha/challenge"}></altcha-widget>
+  </div>
   <button type="submit">Submit</button>
 </form>
 ```
 
-## 4. LiveView hook
+The widget renders its own hidden input holding the payload, named `altcha` by
+default (change it with the `name` attribute). Do not add a second input with that
+name — it would shadow the widget's value in `params`.
 
-The widget emits a `statechange` event. Copy the payload into the hidden input so it
-is submitted with the form.
+The wrapper carries `phx-update="ignore"` (which needs an `id`) so LiveView's DOM
+patching leaves the widget's own markup alone.
+
+## 4. LiveView hook (optional)
+
+Nothing above needs JavaScript: `phx-submit` serialises the form from the DOM, so
+the widget's own hidden input is submitted like any other field. The same is true
+for a dead view (a regular controller form).
+
+A hook is only worth adding when you want to *react* to the widget's state — for
+example to keep the submit button disabled until verification finishes. The widget
+emits a `statechange` event whose `detail` is `{ state, payload }`:
 
 ```javascript
 // assets/js/app.js
@@ -117,12 +135,11 @@ let Hooks = {};
 Hooks.Altcha = {
   mounted() {
     const widget = this.el.querySelector("altcha-widget");
-    const input = this.el.querySelector("#altcha-token-input");
-    if (!widget || !input) return;
+    const button = this.el.querySelector("button[type=submit]");
+    if (!widget || !button) return;
 
     widget.addEventListener("statechange", ({ detail }) => {
-      const { state, payload } = detail || {};
-      input.value = state === "verified" && payload ? payload : "";
+      button.disabled = detail?.state !== "verified";
     });
   },
 };
@@ -133,10 +150,8 @@ let liveSocket = new LiveSocket("/live", Socket, {
 });
 ```
 
-Add `phx-hook="Altcha"` to the form's wrapper element.
-
-For a dead view (regular controller form) the widget populates the input on its own;
-no hook is needed.
+Add `phx-hook="Altcha"` to the form's wrapper element. LiveView requires a unique
+`id` on any element carrying `phx-hook`.
 
 ## 5. Verify the solution
 
@@ -174,13 +189,24 @@ In LiveView, do the same inside `handle_event/3`.
 
 ### Optional: bind the challenge to form fields
 
-If you render `<altcha-widget verifyurl=...>` with `verifyfields`, the widget submits
-a fields hash you can check with
-`Altcha.V2.verify_fields_hash/4`.
+Widget v3 configures server-side verification programmatically, not through HTML
+attributes — `verifyUrl` plus `serverVerificationFields: true` makes the widget send
+the form's text fields to your verification endpoint:
+
+```javascript
+document.querySelector("altcha-widget").configure({
+  verifyUrl: "/altcha/verify",
+  serverVerificationFields: true,
+});
+```
+
+The endpoint answers with a server-signed payload carrying a `fieldsHash`, which you
+can check against the submitted form with `Altcha.V2.verify_fields_hash/4`.
+(In widget v2 these were the `verifyurl` and `verifyfields` attributes.)
 
 ### Optional: Cloud or Sentinel
 
-When you use the hosted [ALTCHA Sentinel](https://altcha.org/docs/v2/api/) endpoint,
+When you use the hosted [ALTCHA Sentinel](https://altcha.org/docs/sentinel/) endpoint,
 the submitted token is a server-signed payload. Verify it with
 `Altcha.V2.verify_server_signature/2`, which also returns the parsed classification /
 score data.
