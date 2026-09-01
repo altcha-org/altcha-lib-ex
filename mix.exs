@@ -4,7 +4,7 @@ defmodule Altcha.MixProject do
   def project do
     [
       app: :altcha,
-      version: "2.1.0",
+      version: "2.1.1",
       elixir: "~> 1.17",
       build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,
