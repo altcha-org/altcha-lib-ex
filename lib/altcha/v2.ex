@@ -695,13 +695,19 @@ defmodule Altcha.V2 do
 
   defp verify_solution_key(options, challenge, solution, hmac_algorithm, start_time) do
     if challenge.parameters.key_signature && options.hmac_key_signature_secret do
-      # Fast path: verify HMAC of the derived key
-      derived_key_bytes = Base.decode16!(solution.derived_key, case: :mixed)
+      # Fast path: verify HMAC of the derived key. `derivedKey` is client-controlled;
+      # anything that is not valid hex is a clean invalid solution, not an exception.
+      valid =
+        case decode_derived_key(solution.derived_key) do
+          {:ok, derived_key_bytes} ->
+            expected_key_sig =
+              do_hmac_hex(derived_key_bytes, hmac_algorithm, options.hmac_key_signature_secret)
 
-      expected_key_sig =
-        do_hmac_hex(derived_key_bytes, hmac_algorithm, options.hmac_key_signature_secret)
+            constant_time_equal?(challenge.parameters.key_signature, expected_key_sig)
 
-      valid = constant_time_equal?(challenge.parameters.key_signature, expected_key_sig)
+          :error ->
+            false
+        end
 
       %VerifySolutionResult{
         expired: false,
@@ -722,7 +728,10 @@ defmodule Altcha.V2 do
       expected_key = derive_fn.(challenge.parameters, salt_bytes, password)
       expected_key_hex = Base.encode16(expected_key, case: :lower)
 
-      key_matches = constant_time_equal?(expected_key_hex, solution.derived_key)
+      key_matches =
+        is_binary(solution.derived_key) and
+          constant_time_equal?(expected_key_hex, solution.derived_key)
+
       prefix_matches = String.starts_with?(expected_key_hex, challenge.parameters.key_prefix)
       valid = key_matches and prefix_matches
 
@@ -735,6 +744,9 @@ defmodule Altcha.V2 do
       }
     end
   end
+
+  defp decode_derived_key(hex) when is_binary(hex), do: Base.decode16(hex, case: :mixed)
+  defp decode_derived_key(_), do: :error
 
   defp key_matches?(derived_key, nil, key_prefix) do
     Base.encode16(derived_key, case: :lower) |> String.starts_with?(key_prefix)

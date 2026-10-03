@@ -737,6 +737,34 @@ defmodule AltchaTest do
         assert result.invalid_solution == false
       end
 
+      test "malformed derived_key returns invalid_solution instead of raising" do
+        # Regression test (bug class 4): `derivedKey` is attacker-controlled; non-hex,
+        # odd-length, missing, or non-string values must yield a clean
+        # invalid_solution on both the key_signature and the re-derivation paths.
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            counter: 7,
+            hmac_signature_secret: @hmac_secret,
+            hmac_key_signature_secret: "key_secret"
+          })
+
+        for key_secret <- ["key_secret", nil],
+            derived_key <- [String.duplicate("zz", 32), "abc", nil, 123] do
+          result =
+            V2.verify_solution(%VerifySolutionOptions{
+              challenge: challenge,
+              solution: %Altcha.V2.Solution{counter: 7, derived_key: derived_key},
+              hmac_signature_secret: @hmac_secret,
+              hmac_key_signature_secret: key_secret
+            })
+
+          assert result.invalid_solution == true
+          assert result.verified == false
+        end
+      end
+
       test "fallback verification enforces key_prefix" do
         # Regression test: the fallback verification path (no key signature) must reject
         # a solution whose derived key is genuinely correct for its counter but does not
