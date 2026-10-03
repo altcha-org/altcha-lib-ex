@@ -10,8 +10,8 @@ A lightweight Elixir library for creating and verifying [ALTCHA](https://altcha.
 
 - [Phoenix integration guide](/guides/phoenix.md) — widget setup, the
   `Altcha.Plug.Challenge` endpoint, LiveView hook, and verification
-- [`examples/server/`](/examples/server/)
-- [`examples/argon2.exs`](/examples/argon2.exs)
+- [`examples/server/`](https://github.com/altcha-org/altcha-lib-ex/tree/main/examples/server)
+- [`examples/argon2.exs`](https://github.com/altcha-org/altcha-lib-ex/blob/main/examples/argon2.exs)
 
 ## Installation
 
