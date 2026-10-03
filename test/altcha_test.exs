@@ -941,6 +941,62 @@ defmodule AltchaTest do
         end
       end
 
+      test "counter is coerced like JS numbers; non-numbers are an invalid solution" do
+        # Jason decodes a JSON `7.0` as a float; JS treats it as 7. Non-numeric counters
+        # are rejected cleanly instead of raising.
+        for counter_mode <- [:uint32, :string] do
+          challenge =
+            V2.create_challenge(%CreateChallengeOptions{
+              algorithm: "SHA-256",
+              cost: 1,
+              counter: 7,
+              counter_mode: counter_mode,
+              hmac_signature_secret: @hmac_secret
+            })
+
+          %{derived_key: derived_key} =
+            V2.solve_challenge(%SolveChallengeOptions{
+              challenge: challenge,
+              counter_mode: counter_mode
+            })
+
+          verify = fn counter ->
+            V2.verify_solution(%VerifySolutionOptions{
+              challenge: challenge,
+              solution: %Altcha.V2.Solution{counter: counter, derived_key: derived_key},
+              counter_mode: counter_mode,
+              hmac_signature_secret: @hmac_secret
+            })
+          end
+
+          assert %{verified: true} = verify.(7.0)
+
+          for counter <- ["7", nil, [7]] do
+            assert %{invalid_solution: true, verified: false} = verify.(counter)
+          end
+        end
+      end
+
+      test "non-string signature is an invalid signature instead of raising" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
+
+        result =
+          V2.verify_solution(%VerifySolutionOptions{
+            challenge: %{challenge | signature: 123},
+            solution: solution,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        assert %{invalid_signature: true, verified: false} = result
+      end
+
       test "fallback verification enforces key_prefix" do
         # Regression test: the fallback verification path (no key signature) must reject
         # a solution whose derived key is genuinely correct for its counter but does not
@@ -1113,6 +1169,21 @@ defmodule AltchaTest do
             V2.verify_server_signature(payload, secret)
           end
         end
+      end
+
+      test "non-string signature is an invalid signature instead of raising" do
+        {result, _} =
+          V2.verify_server_signature(
+            %V2.ServerSignaturePayload{
+              algorithm: "SHA-256",
+              signature: 123,
+              verification_data: "verified=true",
+              verified: true
+            },
+            @hmac_secret
+          )
+
+        assert %{invalid_signature: true, verified: false} = result
       end
     end
   end

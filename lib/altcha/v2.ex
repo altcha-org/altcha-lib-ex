@@ -35,6 +35,8 @@ defmodule Altcha.V2 do
   @default_key_length 32
   @default_key_prefix "00"
   @default_counter_mode :uint32
+  # Number.MAX_SAFE_INTEGER: larger integers are not exact as JS numbers.
+  @max_safe_integer 9_007_199_254_740_991
 
   # ---------------------------------------------------------------------------
   # Types
@@ -622,13 +624,29 @@ defmodule Altcha.V2 do
   # Internal helpers (exposed for testing)
   # ---------------------------------------------------------------------------
 
+  # Counters follow JS number semantics, since the widget's JSON counter is a JS number:
+  # uint32 mode applies ToUint32 (truncate, wrap modulo 2^32), string mode applies
+  # Number#toString. A JSON `7.0`, which Jason decodes as a float, thus behaves as 7.
   @doc false
-  def password_buffer(nonce_bytes, counter, :uint32) do
+  def password_buffer(nonce_bytes, counter, :uint32)
+      when is_integer(counter) and abs(counter) <= @max_safe_integer do
     nonce_bytes <> <<counter::32-big>>
   end
 
-  def password_buffer(nonce_bytes, counter, :string) do
-    nonce_bytes <> Integer.to_string(counter)
+  def password_buffer(nonce_bytes, counter, :uint32) when is_integer(counter) do
+    case js_double(counter) do
+      # ToUint32(Infinity) is 0.
+      :infinity -> nonce_bytes <> <<0::32>>
+      double -> password_buffer(nonce_bytes, double, :uint32)
+    end
+  end
+
+  def password_buffer(nonce_bytes, counter, :uint32) when is_float(counter) do
+    nonce_bytes <> <<trunc(counter)::32-big>>
+  end
+
+  def password_buffer(nonce_bytes, counter, :string) when is_number(counter) do
+    nonce_bytes <> encode_js_number(counter)
   end
 
   @doc false
@@ -726,35 +744,48 @@ defmodule Altcha.V2 do
         verified: valid
       }
     else
-      # Re-derive the key from the solution counter and compare
-      counter_mode = options.counter_mode || @default_counter_mode
-      derive_fn = options.derive_key_fn || default_derive_key_fn(challenge.parameters.algorithm)
-
-      nonce_bytes = Base.decode16!(challenge.parameters.nonce, case: :mixed)
-      salt_bytes = Base.decode16!(challenge.parameters.salt, case: :mixed)
-      password = password_buffer(nonce_bytes, solution.counter, counter_mode)
-
-      expected_key = derive_fn.(challenge.parameters, salt_bytes, password)
-      expected_key_hex = Base.encode16(expected_key, case: :lower)
-
-      key_matches =
-        is_binary(solution.derived_key) and
-          constant_time_equal?(expected_key_hex, solution.derived_key)
-
-      # key_prefix is always lowercase hex; the key is matched case-insensitively.
-      prefix_matches =
-        String.starts_with?(expected_key_hex, String.downcase(challenge.parameters.key_prefix))
-
-      valid = key_matches and prefix_matches
-
-      %VerifySolutionResult{
-        expired: false,
-        invalid_signature: false,
-        invalid_solution: !valid,
-        time: elapsed(start_time),
-        verified: valid
-      }
+      if is_number(solution.counter) do
+        verify_rederived_key(options, challenge, solution, start_time)
+      else
+        # A non-numeric counter cannot match; JS would coerce it, but the widget only
+        # ever sends numbers.
+        %VerifySolutionResult{
+          expired: false,
+          invalid_signature: false,
+          invalid_solution: true,
+          time: elapsed(start_time),
+          verified: false
+        }
+      end
     end
+  end
+
+  defp verify_rederived_key(options, challenge, solution, start_time) do
+    # Re-derive the key from the solution counter and compare
+    counter_mode = options.counter_mode || @default_counter_mode
+    derive_fn = options.derive_key_fn || default_derive_key_fn(challenge.parameters.algorithm)
+
+    nonce_bytes = Base.decode16!(challenge.parameters.nonce, case: :mixed)
+    salt_bytes = Base.decode16!(challenge.parameters.salt, case: :mixed)
+    password = password_buffer(nonce_bytes, solution.counter, counter_mode)
+
+    expected_key = derive_fn.(challenge.parameters, salt_bytes, password)
+    expected_key_hex = Base.encode16(expected_key, case: :lower)
+    key_matches = constant_time_equal?(expected_key_hex, solution.derived_key)
+
+    # key_prefix is always lowercase hex; the key is matched case-insensitively.
+    prefix_matches =
+      String.starts_with?(expected_key_hex, String.downcase(challenge.parameters.key_prefix))
+
+    valid = key_matches and prefix_matches
+
+    %VerifySolutionResult{
+      expired: false,
+      invalid_signature: false,
+      invalid_solution: !valid,
+      time: elapsed(start_time),
+      verified: valid
+    }
   end
 
   defp decode_derived_key(hex) when is_binary(hex), do: Base.decode16(hex, case: :mixed)
@@ -832,18 +863,16 @@ defmodule Altcha.V2 do
   defp escape_js_byte(byte) when byte < 0x20, do: "\\u00" <> Base.encode16(<<byte>>, case: :lower)
   defp escape_js_byte(byte), do: <<byte>>
 
-  @max_safe_integer 9_007_199_254_740_991
-
   # JS numbers are doubles: integers beyond 2^53 become the nearest double, and integers
-  # beyond the double range become Infinity, which JSON.stringify writes as null. Parsing
-  # the decimal rounds to nearest like JSON.parse; :erlang.float/1 truncates.
+  # beyond the double range become Infinity, which JSON.stringify writes as null.
   defp encode_js_number(n) when is_integer(n) and abs(n) <= @max_safe_integer,
     do: Integer.to_string(n)
 
   defp encode_js_number(n) when is_integer(n) do
-    encode_js_number(String.to_float(Integer.to_string(n) <> ".0"))
-  rescue
-    ArgumentError -> "null"
+    case js_double(n) do
+      :infinity -> "null"
+      double -> encode_js_number(double)
+    end
   end
 
   # -0.0 prints as "0" in JS.
@@ -878,6 +907,14 @@ defmodule Altcha.V2 do
     end
   end
 
+  # The double JSON.parse produces for an integer: parsing the decimal rounds to nearest,
+  # whereas :erlang.float/1 truncates. Beyond the double range JS yields Infinity.
+  defp js_double(n) when is_integer(n) do
+    String.to_float(Integer.to_string(n) <> ".0")
+  rescue
+    ArgumentError -> :infinity
+  end
+
   # Shortest round-trip digits of a positive float as {digits, point}, where
   # f = 0.<digits> × 10^point and digits has no leading or trailing zeros.
   defp shortest_decimal(f) do
@@ -904,6 +941,9 @@ defmodule Altcha.V2 do
   defp do_hmac_hex(data, :sha512, key),
     do: :crypto.mac(:hmac, :sha512, key, data) |> Base.encode16() |> String.downcase()
 
+  # Client-supplied values (signature, derivedKey) may be any JSON type; a non-string
+  # never matches.
+  defp constant_time_equal?(a, b) when not (is_binary(a) and is_binary(b)), do: false
   defp constant_time_equal?(a, b) when byte_size(a) != byte_size(b), do: false
 
   defp constant_time_equal?(a, b) do
