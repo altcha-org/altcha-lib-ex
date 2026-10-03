@@ -647,6 +647,40 @@ defmodule AltchaTest do
         assert result.verified == false
       end
 
+      test "expiry matches JS: no whole-second grace, expires_at 0 never expires" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        verify = fn expires_at ->
+          params = %{challenge.parameters | expires_at: expires_at}
+
+          signature =
+            :crypto.mac(:hmac, :sha256, @hmac_secret, V2.canonical_json(params))
+            |> Base.encode16(case: :lower)
+
+          signed = %{challenge | parameters: params, signature: signature}
+          solution = V2.solve_challenge(%SolveChallengeOptions{challenge: signed})
+
+          V2.verify_solution(%VerifySolutionOptions{
+            challenge: signed,
+            solution: solution,
+            hmac_signature_secret: @hmac_secret
+          })
+        end
+
+        # The current whole second is already in the past once any time has elapsed.
+        current_second = System.os_time(:second)
+        Process.sleep(1)
+        assert %{expired: true, verified: false} = verify.(current_second)
+
+        assert %{expired: false, verified: true} = verify.(0)
+        assert %{expired: false, verified: true} = verify.(System.os_time(:second) + 60)
+      end
+
       test "returns invalid_signature when challenge is unsigned" do
         challenge =
           V2.create_challenge(%CreateChallengeOptions{
@@ -890,6 +924,38 @@ defmodule AltchaTest do
         fields = ["field1"]
 
         refute V2.verify_fields_hash(form_data, fields, "badhash", "SHA-256")
+      end
+    end
+
+    describe "verify_server_signature/2" do
+      test "expire matches JS: zero never expires, integer and float expire are checked" do
+        verify = fn expire ->
+          data = "verified=true&expire=#{expire}"
+
+          signature =
+            :crypto.mac(:hmac, :sha256, @hmac_secret, :crypto.hash(:sha256, data))
+            |> Base.encode16(case: :lower)
+
+          {result, _} =
+            V2.verify_server_signature(
+              %V2.ServerSignaturePayload{
+                algorithm: "SHA-256",
+                signature: signature,
+                verification_data: data,
+                verified: true
+              },
+              @hmac_secret
+            )
+
+          result
+        end
+
+        now = System.os_time(:second)
+
+        assert %{expired: false, verified: true} = verify.(0)
+        assert %{expired: false, verified: true} = verify.(now + 60)
+        assert %{expired: true, verified: false} = verify.(now - 1)
+        assert %{expired: true, verified: false} = verify.("#{now - 1}.5")
       end
     end
   end

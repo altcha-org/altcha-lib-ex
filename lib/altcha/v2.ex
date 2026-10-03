@@ -586,12 +586,7 @@ defmodule Altcha.V2 do
 
     verification_data = parse_verification_data(payload.verification_data)
 
-    now = DateTime.to_unix(DateTime.utc_now(), :second)
-
-    expired =
-      is_map(verification_data) and
-        is_integer(verification_data["expire"]) and
-        verification_data["expire"] < now
+    expired = is_map(verification_data) and server_signature_expired?(verification_data["expire"])
 
     invalid_signature = not constant_time_equal?(payload.signature, expected_signature)
 
@@ -801,11 +796,22 @@ defmodule Altcha.V2 do
     |> Kernel.==(0)
   end
 
+  # Same rule as the JS reference (`expiresAt && expiresAt < Date.now() / 1000`): the
+  # current time keeps its fractional seconds, and a nil or zero expires_at never expires.
   defp is_expired?(%ChallengeParameters{expires_at: nil}), do: false
+  defp is_expired?(%ChallengeParameters{expires_at: expires_at}) when expires_at == 0, do: false
 
   defp is_expired?(%ChallengeParameters{expires_at: expires_at}) do
-    DateTime.to_unix(DateTime.utc_now(), :second) > expires_at
+    expires_at < System.os_time(:millisecond) / 1000
   end
+
+  # Same rule as the JS reference (`expire && expire < Math.floor(Date.now() / 1000)`):
+  # unlike challenge expiry, the current time is floored to whole seconds; a missing or
+  # zero expire never expires.
+  defp server_signature_expired?(expire) when is_number(expire) and expire != 0,
+    do: expire < System.os_time(:second)
+
+  defp server_signature_expired?(_), do: false
 
   defp elapsed(start_time), do: System.monotonic_time(:millisecond) - start_time
 
