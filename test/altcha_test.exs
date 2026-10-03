@@ -713,6 +713,32 @@ defmodule AltchaTest do
         assert result == nil
       end
 
+      test "timeout 0 or :infinity disables the timeout, like JS" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            counter: 3
+          })
+
+        # Each attempt takes 10 ms, so any finite 0 ms deadline expires before counter 3.
+        slow_derive = fn params, salt, password ->
+          Process.sleep(10)
+          Altcha.V2.Algorithms.SHA.derive_key(params, salt, password)
+        end
+
+        for timeout <- [0, :infinity] do
+          solution =
+            V2.solve_challenge(%SolveChallengeOptions{
+              challenge: challenge,
+              derive_key_fn: slow_derive,
+              timeout: timeout
+            })
+
+          assert %Solution{counter: 3} = solution
+        end
+      end
+
       test "returns nil for a non-hex key_prefix, which no derived key can match" do
         for key_prefix <- ["zz", "z"] do
           challenge = %Challenge{

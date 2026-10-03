@@ -301,7 +301,7 @@ defmodule Altcha.V2 do
       :counter_step,
       # Optional: custom derive_key_fn(params, salt_bytes, password_bytes) -> key_bytes
       :derive_key_fn,
-      # Optional: timeout in milliseconds, default 90_000
+      # Optional: timeout in milliseconds, default 90_000; 0 or :infinity disables it
       :timeout
     ]
   end
@@ -441,7 +441,7 @@ defmodule Altcha.V2 do
     counter_start = options.counter_start || 0
     counter_step = options.counter_step || 1
     counter_mode = options.counter_mode || @default_counter_mode
-    timeout_ms = options.timeout || 90_000
+    timeout = options.timeout || 90_000
 
     %{nonce: nonce, salt: salt} = challenge.parameters
     nonce_bytes = Base.decode16!(nonce, case: :mixed)
@@ -457,11 +457,13 @@ defmodule Altcha.V2 do
       end
 
     start_time = System.monotonic_time(:millisecond)
-    deadline = start_time + timeout_ms
+
+    # Like JS, a zero timeout means no timeout.
+    deadline = if timeout in [0, :infinity], do: :infinity, else: start_time + timeout
 
     Stream.iterate(counter_start, &(&1 + counter_step))
     |> Enum.reduce_while(nil, fn counter, _acc ->
-      if System.monotonic_time(:millisecond) > deadline do
+      if deadline != :infinity and System.monotonic_time(:millisecond) > deadline do
         {:halt, nil}
       else
         password = password_buffer(nonce_bytes, counter, counter_mode)
