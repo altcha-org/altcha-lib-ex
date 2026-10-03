@@ -255,7 +255,9 @@ defmodule Altcha.V2 do
       :counter,
       # Optional: counter encoding mode (:uint32 | :string), default :uint32
       :counter_mode,
-      # Optional: arbitrary metadata map
+      # Optional: metadata map, signed with the challenge. As in the JS reference, keep it
+      # flat (string / number / boolean / nil values): maps nested inside lists are signed
+      # with sorted keys, whereas JS keeps their original key order.
       :data,
       # Optional: custom derive_key_fn(params, salt_bytes, password_bytes) -> key_bytes
       :derive_key_fn,
@@ -641,6 +643,7 @@ defmodule Altcha.V2 do
     ]
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
     |> encode_canonical_object()
+    |> IO.iodata_to_binary()
   end
 
   @doc false
@@ -759,22 +762,129 @@ defmodule Altcha.V2 do
       binary_part(derived_key, 0, prefix_len) == key_prefix_bytes
   end
 
+  # Canonical JSON must be byte-identical to the JS reference,
+  # `JSON.stringify(sortKeys(parameters))`, so that signatures verify across
+  # implementations and after the widget re-serializes the challenge.
   defp encode_canonical_object(fields) do
     entries =
-      Enum.map(fields, fn {k, v} ->
-        Jason.encode!(k) <> ":" <> encode_canonical_value(v)
-      end)
+      Enum.map(fields, fn {k, v} -> [encode_js_string(k), ?:, encode_canonical_value(v)] end)
 
-    "{" <> Enum.join(entries, ",") <> "}"
+    [?{, Enum.intersperse(entries, ?,), ?}]
   end
 
-  defp encode_canonical_value(v) when is_map(v) do
+  defp encode_canonical_value(nil), do: "null"
+  defp encode_canonical_value(true), do: "true"
+  defp encode_canonical_value(false), do: "false"
+  defp encode_canonical_value(v) when is_atom(v), do: encode_js_string(Atom.to_string(v))
+  defp encode_canonical_value(v) when is_binary(v), do: encode_js_string(v)
+  defp encode_canonical_value(v) when is_number(v), do: encode_js_number(v)
+
+  defp encode_canonical_value(v) when is_list(v),
+    do: [?[, Enum.intersperse(Enum.map(v, &encode_canonical_value/1), ?,), ?]]
+
+  defp encode_canonical_value(v) when is_map(v) and not is_struct(v) do
     v
-    |> Enum.sort_by(fn {k, _} -> k end)
+    |> Enum.map(fn {k, value} -> {to_string(k), value} end)
+    |> Enum.sort_by(fn {k, _} -> js_key_order(k) end)
     |> encode_canonical_object()
   end
 
+  # Structs (e.g. DateTime) serialize through their Jason.Encoder implementation.
   defp encode_canonical_value(v), do: Jason.encode!(v)
+
+  # JSON.stringify emits array-index keys ("0".."4294967294" in canonical form) first, in
+  # numeric order, then the other keys in insertion order, which sortKeys made UTF-16
+  # code-unit order. Big-endian UTF-16 bytes compare in code-unit order.
+  defp js_key_order(key) do
+    case Integer.parse(key) do
+      {index, ""} when index in 0..4_294_967_294//1 ->
+        if Integer.to_string(index) == key, do: {0, index}, else: {1, utf16_key(key)}
+
+      _ ->
+        {1, utf16_key(key)}
+    end
+  end
+
+  defp utf16_key(key), do: :unicode.characters_to_binary(key, :utf8, :utf16)
+
+  # JSON.stringify string escaping: quote, backslash, and control characters only, with
+  # lowercase \u00xx escapes. UTF-8 continuation bytes are >= 0x80, so scanning bytes is safe.
+  defp encode_js_string(string) do
+    [?", for(<<byte <- string>>, into: "", do: escape_js_byte(byte)), ?"]
+  end
+
+  defp escape_js_byte(?"), do: "\\\""
+  defp escape_js_byte(?\\), do: "\\\\"
+  defp escape_js_byte(?\b), do: "\\b"
+  defp escape_js_byte(?\f), do: "\\f"
+  defp escape_js_byte(?\n), do: "\\n"
+  defp escape_js_byte(?\r), do: "\\r"
+  defp escape_js_byte(?\t), do: "\\t"
+  defp escape_js_byte(byte) when byte < 0x20, do: "\\u00" <> Base.encode16(<<byte>>, case: :lower)
+  defp escape_js_byte(byte), do: <<byte>>
+
+  @max_safe_integer 9_007_199_254_740_991
+
+  # JS numbers are doubles: integers beyond 2^53 become the nearest double, and integers
+  # beyond the double range become Infinity, which JSON.stringify writes as null. Parsing
+  # the decimal rounds to nearest like JSON.parse; :erlang.float/1 truncates.
+  defp encode_js_number(n) when is_integer(n) and abs(n) <= @max_safe_integer,
+    do: Integer.to_string(n)
+
+  defp encode_js_number(n) when is_integer(n) do
+    encode_js_number(String.to_float(Integer.to_string(n) <> ".0"))
+  rescue
+    ArgumentError -> "null"
+  end
+
+  # -0.0 prints as "0" in JS.
+  defp encode_js_number(f) when f == 0, do: "0"
+  defp encode_js_number(f) when f < 0, do: "-" <> encode_js_number(-f)
+
+  # ECMA-262 Number::toString(x) for x > 0, over the shortest round-trip digits.
+  defp encode_js_number(f) do
+    {digits, point} = shortest_decimal(f)
+    k = byte_size(digits)
+
+    cond do
+      k <= point and point <= 21 ->
+        digits <> String.duplicate("0", point - k)
+
+      0 < point and point <= 21 ->
+        binary_part(digits, 0, point) <> "." <> binary_part(digits, point, k - point)
+
+      -6 < point and point <= 0 ->
+        "0." <> String.duplicate("0", -point) <> digits
+
+      true ->
+        exponent = point - 1
+        sign = if exponent < 0, do: "-", else: "+"
+
+        mantissa =
+          if k == 1,
+            do: digits,
+            else: binary_part(digits, 0, 1) <> "." <> binary_part(digits, 1, k - 1)
+
+        mantissa <> "e" <> sign <> Integer.to_string(abs(exponent))
+    end
+  end
+
+  # Shortest round-trip digits of a positive float as {digits, point}, where
+  # f = 0.<digits> × 10^point and digits has no leading or trailing zeros.
+  defp shortest_decimal(f) do
+    {mantissa, exponent} =
+      case String.split(:erlang.float_to_binary(f, [:short]), "e") do
+        [mantissa] -> {mantissa, 0}
+        [mantissa, exponent] -> {mantissa, String.to_integer(exponent)}
+      end
+
+    [int, frac] = String.split(mantissa, ".")
+    all_digits = int <> frac
+    digits = String.trim_leading(all_digits, "0")
+    point = byte_size(int) + exponent - (byte_size(all_digits) - byte_size(digits))
+
+    {String.trim_trailing(digits, "0"), point}
+  end
 
   defp do_hmac_hex(data, :sha256, key),
     do: :crypto.mac(:hmac, :sha256, key, data) |> Base.encode16() |> String.downcase()

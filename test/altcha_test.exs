@@ -401,6 +401,63 @@ defmodule AltchaTest do
         assert decoded["memoryCost"] == 16384
         assert decoded["parallelism"] == 1
       end
+
+      test "is byte-identical to JS JSON.stringify(sortKeys(...))" do
+        # Expected output generated with altcha-lib's canonicalJSON for the same values:
+        # JS number formatting, array-index keys first then UTF-16 key order, and
+        # JSON.stringify string escaping.
+        params = %ChallengeParameters{
+          algorithm: "SHA-256",
+          data: %{
+            "score" => 1.0,
+            "negZero" => -0.0,
+            "big" => 1.0e21,
+            "small" => 1.5e-7,
+            "tiny" => 0.000001,
+            "hugeInt" => 12_345_678_901_234_567_890,
+            "10" => 1,
+            "9" => 2,
+            "01" => 3,
+            "B" => 4,
+            "a" => 5,
+            "\u{E000}" => 6,
+            "😀" => 7,
+            "s" => "\u0001\u001f\"\\\n é \u2028",
+            "nested" => %{"list" => [1.0, 2.5, nil, true]}
+          }
+        }
+
+        assert V2.canonical_json(params) ==
+                 ~s|{"algorithm":"SHA-256","data":{"9":2,"10":1,"01":3,"B":4,"a":5,| <>
+                   ~s|"big":1e+21,"hugeInt":12345678901234567000,"negZero":0,| <>
+                   ~s|"nested":{"list":[1,2.5,null,true]},| <>
+                   ~s|"s":"\\u0001\\u001f\\"\\\\\\n é \u2028","score":1,"small":1.5e-7,| <>
+                   ~s|"tiny":0.000001,"😀":7,"\u{E000}":6}}|
+      end
+
+      test "signature survives the widget's JSON round trip of float data" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            data: %{"score" => 1.0, "ratio" => 0.5},
+            hmac_signature_secret: @hmac_secret
+          })
+
+        # JSON.parse + JSON.stringify in the widget turns 1.0 into 1, which Jason then
+        # decodes as an integer.
+        round_tripped = put_in(challenge.parameters.data, %{"score" => 1, "ratio" => 0.5})
+        solution = V2.solve_challenge(%SolveChallengeOptions{challenge: round_tripped})
+
+        result =
+          V2.verify_solution(%VerifySolutionOptions{
+            challenge: round_tripped,
+            solution: solution,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        assert %{verified: true, invalid_signature: false} = result
+      end
     end
 
     describe "password_buffer/3" do
