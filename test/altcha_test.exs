@@ -810,6 +810,45 @@ defmodule AltchaTest do
         refute result.verified, "solution violating key_prefix must not verify"
         assert result.invalid_solution == true
       end
+
+      test "key_prefix is lowercased on create and matched case-insensitively" do
+        for prefix <- ["0A", "A"] do
+          lower = String.downcase(prefix)
+
+          created =
+            V2.create_challenge(%CreateChallengeOptions{
+              algorithm: "SHA-256",
+              cost: 1,
+              key_prefix: prefix,
+              hmac_signature_secret: @hmac_secret
+            })
+
+          assert created.parameters.key_prefix == lower
+
+          # A challenge signed elsewhere may still carry an uppercase prefix: solve and
+          # verify must treat it as its lowercase form, for even and odd lengths alike.
+          upper_params = %{created.parameters | key_prefix: prefix}
+
+          upper_signature =
+            :crypto.mac(:hmac, :sha256, @hmac_secret, V2.canonical_json(upper_params))
+            |> Base.encode16(case: :lower)
+
+          challenge = %{created | parameters: upper_params, signature: upper_signature}
+
+          solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
+          assert String.starts_with?(solution.derived_key, lower)
+
+          result =
+            V2.verify_solution(%VerifySolutionOptions{
+              challenge: challenge,
+              solution: solution,
+              hmac_signature_secret: @hmac_secret
+            })
+
+          assert result.verified == true, "key_prefix #{inspect(prefix)}"
+          assert result.invalid_solution == false
+        end
+      end
     end
 
     describe "decode_payload/1" do

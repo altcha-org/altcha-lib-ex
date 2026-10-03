@@ -269,7 +269,7 @@ defmodule Altcha.V2 do
       :hmac_signature_secret,
       # Optional: derived key length in bytes, default 32
       :key_length,
-      # Optional: required hex prefix for the derived key, default "00"
+      # Optional: required hex prefix for the derived key, default "00"; lowercased
       :key_prefix,
       # Optional: number of prefix bytes used in deterministic mode, default key_length/2
       :key_prefix_length,
@@ -348,7 +348,7 @@ defmodule Altcha.V2 do
     algorithm = options.algorithm
     cost = options.cost
     key_length = options.key_length || @default_key_length
-    key_prefix = options.key_prefix || @default_key_prefix
+    key_prefix = String.downcase(options.key_prefix || @default_key_prefix)
     key_prefix_length = options.key_prefix_length || div(key_length, 2)
     counter_mode = options.counter_mode || @default_counter_mode
 
@@ -419,7 +419,9 @@ defmodule Altcha.V2 do
     counter_mode = options.counter_mode || @default_counter_mode
     timeout_ms = options.timeout || 90_000
 
-    %{nonce: nonce, salt: salt, key_prefix: key_prefix} = challenge.parameters
+    %{nonce: nonce, salt: salt} = challenge.parameters
+    # key_prefix is always lowercase hex; the key is matched case-insensitively.
+    key_prefix = String.downcase(challenge.parameters.key_prefix)
     nonce_bytes = Base.decode16!(nonce, case: :mixed)
     salt_bytes = Base.decode16!(salt, case: :mixed)
 
@@ -427,7 +429,7 @@ defmodule Altcha.V2 do
 
     key_prefix_bytes =
       if rem(String.length(key_prefix), 2) == 0 do
-        Base.decode16!(key_prefix, case: :mixed)
+        Base.decode16!(key_prefix, case: :lower)
       else
         nil
       end
@@ -732,7 +734,10 @@ defmodule Altcha.V2 do
         is_binary(solution.derived_key) and
           constant_time_equal?(expected_key_hex, solution.derived_key)
 
-      prefix_matches = String.starts_with?(expected_key_hex, challenge.parameters.key_prefix)
+      # key_prefix is always lowercase hex; the key is matched case-insensitively.
+      prefix_matches =
+        String.starts_with?(expected_key_hex, String.downcase(challenge.parameters.key_prefix))
+
       valid = key_matches and prefix_matches
 
       %VerifySolutionResult{
