@@ -1178,6 +1178,12 @@ defmodule AltchaTest do
         assert decoded.solution.counter == solution.counter
         assert decoded.solution.derived_key == solution.derived_key
       end
+
+      test "returns nil for a missing or non-string payload" do
+        for input <- [nil, 123, %{}] do
+          assert V2.decode_payload(input) == nil
+        end
+      end
     end
 
     describe "verify_fields_hash/4" do
@@ -1258,6 +1264,54 @@ defmodule AltchaTest do
           )
 
         assert %{invalid_signature: true, verified: false} = result
+      end
+
+      test "malformed client payload is an invalid result instead of raising" do
+        # params["altcha"] is client-controlled: missing, not JSON, not an object, or
+        # with a missing / non-string verificationData.
+        inputs = [
+          nil,
+          123,
+          "garbage",
+          Base.encode64("null"),
+          Base.encode64("[1]"),
+          Base.encode64("{oops"),
+          Base.encode64(~s({"algorithm":"SHA-256","signature":"ab","verified":true})),
+          Base.encode64(~s({"signature":"ab","verificationData":1,"verified":true})),
+          %{"signature" => "ab", "verificationData" => ["verified=true"], "verified" => true}
+        ]
+
+        for input <- inputs do
+          assert {%{verified: false, invalid_signature: true, invalid_solution: true}, nil} =
+                   V2.verify_server_signature(input, @hmac_secret),
+                 "input #{inspect(input)}"
+        end
+      end
+
+      test "a value with a trailing newline stays a string, like JS" do
+        # Elixir's `$` also matches before a trailing newline; the whole data must not be
+        # discarded because "5\n" looked like an integer.
+        data =
+          URI.encode_query(%{"verified" => "true", "params.num" => "5\n", "score" => "1.5\n"})
+
+        signature =
+          :crypto.mac(:hmac, :sha256, @hmac_secret, :crypto.hash(:sha256, data))
+          |> Base.encode16(case: :lower)
+
+        {result, verification_data} =
+          V2.verify_server_signature(
+            %V2.ServerSignaturePayload{
+              algorithm: "SHA-256",
+              signature: signature,
+              verification_data: data,
+              verified: true
+            },
+            @hmac_secret
+          )
+
+        assert %{verified: true} = result
+        assert verification_data["params.num"] == "5"
+        assert verification_data["score"] == "1.5"
       end
     end
   end

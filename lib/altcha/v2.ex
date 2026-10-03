@@ -548,6 +548,8 @@ defmodule Altcha.V2 do
 
   @doc """
   Decodes a Base64-encoded JSON payload from a client into a `%Altcha.V2.Payload{}`.
+
+  Returns `nil` when the payload is missing or malformed.
   """
   def decode_payload(encoded) when is_binary(encoded) do
     json =
@@ -560,6 +562,8 @@ defmodule Altcha.V2 do
   rescue
     _ -> nil
   end
+
+  def decode_payload(_), do: nil
 
   @doc """
   Verifies if the hash of form fields matches the provided hash.
@@ -588,30 +592,30 @@ defmodule Altcha.V2 do
   - `invalid_solution` — `verified` is not `true` in the data or payload
 
   Raises `ArgumentError` when `hmac_secret` is missing or empty, like the JS reference.
+  A missing or malformed payload is a failed verification with `nil` verification data.
   """
   def verify_server_signature(payload, hmac_secret) do
     require_secret!(hmac_secret, "hmac_secret")
-
-    payload =
-      case payload do
-        %ServerSignaturePayload{} = p ->
-          p
-
-        %{} = map ->
-          ServerSignaturePayload.from_map(map)
-
-        binary when is_binary(binary) ->
-          json =
-            case Base.decode64(binary) do
-              {:ok, decoded} -> decoded
-              :error -> binary
-            end
-
-          ServerSignaturePayload.from_json(json)
-      end
-
     start_time = System.monotonic_time(:millisecond)
 
+    case to_server_signature_payload(payload) do
+      %ServerSignaturePayload{verification_data: data} = payload when is_binary(data) ->
+        do_verify_server_signature(payload, hmac_secret, start_time)
+
+      _ ->
+        result = %VerifySolutionResult{
+          expired: false,
+          invalid_signature: true,
+          invalid_solution: true,
+          time: elapsed(start_time),
+          verified: false
+        }
+
+        {result, nil}
+    end
+  end
+
+  defp do_verify_server_signature(payload, hmac_secret, start_time) do
     digest = sha_digest(payload.algorithm)
     hash_data = :crypto.hash(digest, payload.verification_data)
     expected_signature = do_hmac_hex(hash_data, digest, hmac_secret)
@@ -639,6 +643,25 @@ defmodule Altcha.V2 do
 
     {result, verification_data}
   end
+
+  # The payload is client-controlled: anything that is not a JSON object yields nil.
+  defp to_server_signature_payload(%ServerSignaturePayload{} = payload), do: payload
+  defp to_server_signature_payload(%{} = map), do: ServerSignaturePayload.from_map(map)
+
+  defp to_server_signature_payload(binary) when is_binary(binary) do
+    json =
+      case Base.decode64(binary) do
+        {:ok, decoded} -> decoded
+        :error -> binary
+      end
+
+    case Jason.decode(json) do
+      {:ok, %{} = map} -> ServerSignaturePayload.from_map(map)
+      _ -> nil
+    end
+  end
+
+  defp to_server_signature_payload(_), do: nil
 
   # ---------------------------------------------------------------------------
   # Internal helpers (exposed for testing)
@@ -1049,8 +1072,9 @@ defmodule Altcha.V2 do
         cond do
           v == "true" -> true
           v == "false" -> false
-          Regex.match?(~r/^\d+$/, v) -> String.to_integer(v)
-          Regex.match?(~r/^\d+\.\d+$/, v) -> String.to_float(v)
+          # \A…\z, not ^…$: `$` would also match before a trailing newline.
+          Regex.match?(~r/\A\d+\z/, v) -> String.to_integer(v)
+          Regex.match?(~r/\A\d+\.\d+\z/, v) -> String.to_float(v)
           k in convert_to_list and v != "" -> v |> String.trim() |> String.split(",")
           true -> String.trim(v)
         end

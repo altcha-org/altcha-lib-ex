@@ -71,20 +71,24 @@ With `counter` and `hmac_key_signature_secret`, the server pre-computes the expe
 The client submits a Base64-encoded JSON payload containing the challenge and solution:
 
 ```elixir
-# Decode the client payload
-payload = Altcha.V2.decode_payload(params["altcha"])
+# Decode the client payload; nil when missing or malformed
+case Altcha.V2.decode_payload(params["altcha"]) do
+  %Altcha.V2.Payload{} = payload ->
+    result = Altcha.V2.verify_solution(%Altcha.V2.VerifySolutionOptions{
+      challenge: payload.challenge,
+      solution: payload.solution,
+      hmac_signature_secret: "your-secret",
+      hmac_key_signature_secret: "your-key-secret"  # optional
+    })
 
-result = Altcha.V2.verify_solution(%Altcha.V2.VerifySolutionOptions{
-  challenge: payload.challenge,
-  solution: payload.solution,
-  hmac_signature_secret: "your-secret",
-  hmac_key_signature_secret: "your-key-secret"  # optional
-})
+    result.verified       # true / false
+    result.expired        # true if the challenge has expired
+    result.invalid_signature  # true if the challenge was tampered with
+    result.invalid_solution   # true if the solution is incorrect
 
-result.verified       # true / false
-result.expired        # true if the challenge has expired
-result.invalid_signature  # true if the challenge was tampered with
-result.invalid_solution   # true if the solution is incorrect
+  nil ->
+    :invalid_payload  # reject the submission
+end
 ```
 
 ### Verifying a server signature
