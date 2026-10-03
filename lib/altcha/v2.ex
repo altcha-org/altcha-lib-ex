@@ -273,9 +273,11 @@ defmodule Altcha.V2 do
       :hmac_signature_secret,
       # Optional: derived key length in bytes, default 32
       :key_length,
-      # Optional: required hex prefix for the derived key, default "00"; lowercased
+      # Optional: required hex prefix for the derived key, default "00"; lowercased.
+      # A non-hex prefix raises ArgumentError.
       :key_prefix,
-      # Optional: number of prefix bytes used in deterministic mode, default key_length/2
+      # Optional: number of prefix bytes used in deterministic mode, default and maximum
+      # key_length/2
       :key_prefix_length,
       # Optional: memory cost in KiB (Scrypt/Argon2id)
       :memory_cost,
@@ -353,7 +355,17 @@ defmodule Altcha.V2 do
     cost = options.cost
     key_length = options.key_length || @default_key_length
     key_prefix = String.downcase(options.key_prefix || @default_key_prefix)
-    key_prefix_length = options.key_prefix_length || div(key_length, 2)
+
+    if not hex?(key_prefix) do
+      raise ArgumentError, "key_prefix must be a hex string, got: #{inspect(options.key_prefix)}"
+    end
+
+    # Capped so that deterministic mode always leaves half the key unrevealed.
+    max_key_prefix_length = div(key_length, 2)
+
+    key_prefix_length =
+      min(options.key_prefix_length || max_key_prefix_length, max_key_prefix_length)
+
     counter_mode = options.counter_mode || @default_counter_mode
 
     nonce = :crypto.strong_rand_bytes(16) |> Base.encode16() |> String.downcase()
@@ -410,13 +422,21 @@ defmodule Altcha.V2 do
   Solves a V2 challenge by brute-forcing counter values until the derived key
   starts with the required prefix.
 
-  Returns a `%Altcha.V2.Solution{}` on success, or `nil` if timed out.
+  Returns a `%Altcha.V2.Solution{}` on success, or `nil` if timed out or the challenge's
+  `key_prefix` is not hex (no derived key can match it).
 
   ## Options
 
   See `Altcha.V2.SolveChallengeOptions` for all available options.
   """
   def solve_challenge(%SolveChallengeOptions{} = options) do
+    # key_prefix is always lowercase hex; the key is matched case-insensitively.
+    key_prefix = String.downcase(options.challenge.parameters.key_prefix)
+
+    if hex?(key_prefix), do: solve_challenge(options, key_prefix), else: nil
+  end
+
+  defp solve_challenge(options, key_prefix) do
     challenge = options.challenge
     counter_start = options.counter_start || 0
     counter_step = options.counter_step || 1
@@ -424,8 +444,6 @@ defmodule Altcha.V2 do
     timeout_ms = options.timeout || 90_000
 
     %{nonce: nonce, salt: salt} = challenge.parameters
-    # key_prefix is always lowercase hex; the key is matched case-insensitively.
-    key_prefix = String.downcase(challenge.parameters.key_prefix)
     nonce_bytes = Base.decode16!(nonce, case: :mixed)
     salt_bytes = Base.decode16!(salt, case: :mixed)
 
@@ -976,6 +994,8 @@ defmodule Altcha.V2 do
 
   # Secrets and keySignature follow JS truthiness: nil and "" both mean unset.
   defp present?(value), do: value not in [nil, ""]
+
+  defp hex?(string), do: String.match?(string, ~r/\A[0-9a-f]*\z/)
 
   # A configuration error, not a verification outcome: raise instead of failing the
   # signature check with an empty key, which Erlang accepts but Web Crypto rejects.

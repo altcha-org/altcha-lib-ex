@@ -619,6 +619,36 @@ defmodule AltchaTest do
         assert is_binary(signed.signature)
         assert signed.parameters.key_signature == nil
       end
+
+      test "key_prefix_length is capped to half the key length" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            counter: 7,
+            key_length: 32,
+            key_prefix_length: 40,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        # 16 bytes, as with the default key_prefix_length.
+        assert String.length(challenge.parameters.key_prefix) == 32
+
+        solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
+        assert solution.counter == 7
+      end
+
+      test "raises ArgumentError for a non-hex key_prefix" do
+        for key_prefix <- ["zz", "0g", "z"] do
+          assert_raise ArgumentError, ~r/key_prefix must be a hex string/, fn ->
+            V2.create_challenge(%CreateChallengeOptions{
+              algorithm: "SHA-256",
+              cost: 1,
+              key_prefix: key_prefix
+            })
+          end
+        end
+      end
     end
 
     describe "solve_challenge/1" do
@@ -681,6 +711,24 @@ defmodule AltchaTest do
           })
 
         assert result == nil
+      end
+
+      test "returns nil for a non-hex key_prefix, which no derived key can match" do
+        for key_prefix <- ["zz", "z"] do
+          challenge = %Challenge{
+            parameters: %ChallengeParameters{
+              algorithm: "SHA-256",
+              nonce: "aabb",
+              salt: "ccdd",
+              cost: 1,
+              key_length: 32,
+              key_prefix: key_prefix
+            }
+          }
+
+          assert V2.solve_challenge(%SolveChallengeOptions{challenge: challenge, timeout: 5_000}) ==
+                   nil
+        end
       end
     end
 
