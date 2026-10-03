@@ -19,10 +19,12 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     ### Options
 
-      * `:hmac_signature_secret` (**required**) - secret used to sign the challenge
-        parameters. Accepts a string, a zero-arity function, or an
+      * `:hmac_signature_secret` (**required**) - non-empty secret used to sign the
+        challenge parameters. Accepts a string, a zero-arity function, or an
         `{module, function, args}` tuple. Functions and MFA tuples are resolved on
-        every request, so reading the value from the environment is safe.
+        every request, so reading the value from the environment is safe. A `nil` or
+        empty secret raises `ArgumentError`: at `init/1` for a string, per request for
+        a function or MFA tuple.
       * `:hmac_key_signature_secret` - secret for signing the pre-computed derived
         key. Only meaningful together with `:counter` (deterministic mode). Same
         value shapes as `:hmac_signature_secret`.
@@ -72,11 +74,8 @@ if Code.ensure_loaded?(Plug.Conn) do
     def init(opts) when is_list(opts) do
       opts = Keyword.merge(Application.get_env(:altcha, __MODULE__, []), opts)
 
-      unless Keyword.has_key?(opts, :hmac_signature_secret) do
-        raise ArgumentError,
-              "#{inspect(__MODULE__)} requires a :hmac_signature_secret option, set either " <>
-                "inline or via `config :altcha, #{inspect(__MODULE__)}, hmac_signature_secret: ...`"
-      end
+      secret = Keyword.get(opts, :hmac_signature_secret)
+      if not lazy?(secret), do: require_secret!(secret)
 
       %{
         hmac_signature_secret: Keyword.fetch!(opts, :hmac_signature_secret),
@@ -96,7 +95,7 @@ if Code.ensure_loaded?(Plug.Conn) do
           cost: opts.cost,
           counter: resolve(opts.counter),
           expires_at: DateTime.add(DateTime.utc_now(), opts.expires_in, :second),
-          hmac_signature_secret: resolve(opts.hmac_signature_secret),
+          hmac_signature_secret: opts.hmac_signature_secret |> resolve() |> require_secret!(),
           hmac_key_signature_secret: resolve(opts.hmac_key_signature_secret)
         })
 
@@ -108,6 +107,21 @@ if Code.ensure_loaded?(Plug.Conn) do
     end
 
     def call(conn, _opts), do: conn
+
+    defp lazy?(fun) when is_function(fun, 0), do: true
+    defp lazy?({mod, fun, args}) when is_atom(mod) and is_atom(fun) and is_list(args), do: true
+    defp lazy?(_), do: false
+
+    # An empty secret would make create_challenge/1 serve unsigned challenges that never
+    # verify, so treat it as the misconfiguration it is.
+    defp require_secret!(secret) when is_binary(secret) and secret != "", do: secret
+
+    defp require_secret!(secret) do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)} requires a non-empty string :hmac_signature_secret, set " <>
+              "either inline or via `config :altcha, #{inspect(__MODULE__)}, " <>
+              "hmac_signature_secret: ...`, got: #{inspect(secret)}"
+    end
 
     defp resolve(nil), do: nil
     defp resolve(fun) when is_function(fun, 0), do: fun.()

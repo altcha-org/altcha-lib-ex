@@ -593,6 +593,32 @@ defmodule AltchaTest do
         challenge = V2.create_challenge(options)
         assert challenge.parameters.expires_at == expires
       end
+
+      test "empty-string secrets are treated as unset, like JS" do
+        unsigned =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            counter: 7,
+            hmac_signature_secret: "",
+            hmac_key_signature_secret: "key_secret"
+          })
+
+        assert unsigned.signature == nil
+        assert unsigned.parameters.key_signature == nil
+
+        signed =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            counter: 7,
+            hmac_signature_secret: @hmac_secret,
+            hmac_key_signature_secret: ""
+          })
+
+        assert is_binary(signed.signature)
+        assert signed.parameters.key_signature == nil
+      end
     end
 
     describe "solve_challenge/1" do
@@ -828,6 +854,65 @@ defmodule AltchaTest do
         assert result.invalid_solution == false
       end
 
+      test "empty key_signature or key secret falls back to re-deriving the key, like JS" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            counter: 7,
+            hmac_signature_secret: @hmac_secret,
+            hmac_key_signature_secret: "key_secret"
+          })
+
+        # A challenge from another implementation may carry keySignature "".
+        empty_sig_params = %{challenge.parameters | key_signature: ""}
+
+        empty_sig_challenge = %{
+          challenge
+          | parameters: empty_sig_params,
+            signature:
+              :crypto.mac(:hmac, :sha256, @hmac_secret, V2.canonical_json(empty_sig_params))
+              |> Base.encode16(case: :lower)
+        }
+
+        # The fast path with an empty key or signature would reject this correct solution;
+        # re-deriving the key accepts it.
+        for {challenge, key_secret} <- [{challenge, ""}, {empty_sig_challenge, "key_secret"}] do
+          solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
+
+          result =
+            V2.verify_solution(%VerifySolutionOptions{
+              challenge: challenge,
+              solution: solution,
+              hmac_signature_secret: @hmac_secret,
+              hmac_key_signature_secret: key_secret
+            })
+
+          assert %{verified: true, invalid_solution: false} = result
+        end
+      end
+
+      test "raises ArgumentError for a missing or empty hmac_signature_secret" do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            hmac_signature_secret: @hmac_secret
+          })
+
+        solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
+
+        for secret <- ["", nil] do
+          assert_raise ArgumentError, ~r/non-empty string/, fn ->
+            V2.verify_solution(%VerifySolutionOptions{
+              challenge: challenge,
+              solution: solution,
+              hmac_signature_secret: secret
+            })
+          end
+        end
+      end
+
       test "malformed derived_key returns invalid_solution instead of raising" do
         # Regression test (bug class 4): `derivedKey` is attacker-controlled; non-hex,
         # odd-length, missing, or non-string values must yield a clean
@@ -1013,6 +1098,21 @@ defmodule AltchaTest do
         assert %{expired: false, verified: true} = verify.(now + 60)
         assert %{expired: true, verified: false} = verify.(now - 1)
         assert %{expired: true, verified: false} = verify.("#{now - 1}.5")
+      end
+
+      test "raises ArgumentError for a missing or empty secret" do
+        payload = %V2.ServerSignaturePayload{
+          algorithm: "SHA-256",
+          signature: "ab",
+          verification_data: "verified=true",
+          verified: true
+        }
+
+        for secret <- ["", nil] do
+          assert_raise ArgumentError, ~r/non-empty string/, fn ->
+            V2.verify_server_signature(payload, secret)
+          end
+        end
       end
     end
   end

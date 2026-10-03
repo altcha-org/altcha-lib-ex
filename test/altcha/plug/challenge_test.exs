@@ -31,6 +31,14 @@ defmodule Altcha.Plug.ChallengeTest do
       assert_raise ArgumentError, ~r/hmac_signature_secret/, fn -> Challenge.init([]) end
     end
 
+    test "raises when :hmac_signature_secret is nil or empty" do
+      for secret <- [nil, ""] do
+        assert_raise ArgumentError, ~r/non-empty string :hmac_signature_secret/, fn ->
+          Challenge.init(hmac_signature_secret: secret)
+        end
+      end
+    end
+
     test "reads options from application config" do
       Application.put_env(:altcha, Challenge, hmac_signature_secret: @secret, cost: 1)
       on_exit(fn -> Application.delete_env(:altcha, Challenge) end)
@@ -96,6 +104,17 @@ defmodule Altcha.Plug.ChallengeTest do
       challenge = V2.Challenge.from_json(conn.resp_body)
 
       assert verify(challenge, solve(challenge), @secret).verified
+    end
+
+    test "raises when a resolved secret is empty" do
+      System.put_env("ALTCHA_TEST_SECRET", "")
+      on_exit(fn -> System.delete_env("ALTCHA_TEST_SECRET") end)
+
+      for secret <- [{System, :fetch_env!, ["ALTCHA_TEST_SECRET"]}, fn -> nil end] do
+        assert_raise ArgumentError, ~r/non-empty string :hmac_signature_secret/, fn ->
+          get(hmac_signature_secret: secret, cost: 1)
+        end
+      end
     end
 
     test "passes non-GET requests through untouched" do

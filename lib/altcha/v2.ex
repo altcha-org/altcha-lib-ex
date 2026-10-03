@@ -391,7 +391,7 @@ defmodule Altcha.V2 do
 
     hmac_algorithm = options.hmac_algorithm || @default_hmac_algorithm
 
-    if options.hmac_signature_secret == nil do
+    if not present?(options.hmac_signature_secret) do
       %Challenge{parameters: parameters}
     else
       sign_challenge(
@@ -470,13 +470,17 @@ defmodule Altcha.V2 do
   3. Whether the challenge signature is valid (tamper protection)
   4. Whether the solution is valid (via key signature or re-derivation)
 
-  Returns a `%Altcha.V2.VerifySolutionResult{}`.
+  Returns a `%Altcha.V2.VerifySolutionResult{}`. Raises `ArgumentError` when
+  `hmac_signature_secret` is missing or empty, like the JS reference, whose Web Crypto
+  HMAC rejects zero-length keys.
 
   ## Options
 
   See `Altcha.V2.VerifySolutionOptions` for all available options.
   """
   def verify_solution(%VerifySolutionOptions{} = options) do
+    require_secret!(options.hmac_signature_secret, "hmac_signature_secret")
+
     challenge = options.challenge
     solution = options.solution
     hmac_algorithm = options.hmac_algorithm || @default_hmac_algorithm
@@ -560,8 +564,12 @@ defmodule Altcha.V2 do
   - `expired` — `expire` timestamp in the verification data has passed
   - `invalid_signature` — HMAC of `hash(verificationData)` does not match
   - `invalid_solution` — `verified` is not `true` in the data or payload
+
+  Raises `ArgumentError` when `hmac_secret` is missing or empty, like the JS reference.
   """
   def verify_server_signature(payload, hmac_secret) do
+    require_secret!(hmac_secret, "hmac_secret")
+
     payload =
       case payload do
         %ServerSignaturePayload{} = p ->
@@ -675,7 +683,7 @@ defmodule Altcha.V2 do
          hmac_key_signature_secret
        ) do
     parameters =
-      if derived_key && hmac_key_signature_secret do
+      if derived_key && present?(hmac_key_signature_secret) do
         key_sig = do_hmac_hex(derived_key, hmac_algorithm, hmac_key_signature_secret)
         %{parameters | key_signature: key_sig}
       else
@@ -694,7 +702,8 @@ defmodule Altcha.V2 do
   end
 
   defp verify_solution_key(options, challenge, solution, hmac_algorithm, start_time) do
-    if challenge.parameters.key_signature && options.hmac_key_signature_secret do
+    if present?(challenge.parameters.key_signature) and
+         present?(options.hmac_key_signature_secret) do
       # Fast path: verify HMAC of the derived key. `derivedKey` is client-controlled;
       # anything that is not valid hex is a clean invalid solution, not an exception.
       valid =
@@ -924,6 +933,17 @@ defmodule Altcha.V2 do
   defp server_signature_expired?(_), do: false
 
   defp elapsed(start_time), do: System.monotonic_time(:millisecond) - start_time
+
+  # Secrets and keySignature follow JS truthiness: nil and "" both mean unset.
+  defp present?(value), do: value not in [nil, ""]
+
+  # A configuration error, not a verification outcome: raise instead of failing the
+  # signature check with an empty key, which Erlang accepts but Web Crypto rejects.
+  defp require_secret!(secret, name) do
+    if not (is_binary(secret) and secret != "") do
+      raise ArgumentError, "#{name} must be a non-empty string, got: #{inspect(secret)}"
+    end
+  end
 
   defp normalize_expires_at(nil), do: nil
   defp normalize_expires_at(%DateTime{} = dt), do: DateTime.to_unix(dt, :second)
