@@ -47,9 +47,13 @@ challenge = Altcha.V2.create_challenge(%Altcha.V2.CreateChallengeOptions{
   hmac_signature_secret: "your-secret"
 })
 
-# Send as JSON to the client
+# Send as JSON to the client (or JSON.encode!/1 on Elixir 1.18+)
 Jason.encode!(challenge)
 ```
+
+The V1 and V2 structs implement `Jason.Encoder` and, on Elixir 1.18+, `JSON.Encoder`.
+For any other encoder, `to_map/1` (e.g. `Altcha.V2.Payload.to_map/1`) returns the
+wire format as plain maps.
 
 For deterministic mode (random counter, faster server-side verification):
 

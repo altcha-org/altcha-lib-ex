@@ -41,15 +41,23 @@ defmodule Altcha.V1 do
     ]
 
     defimpl Jason.Encoder do
-      def encode(challenge, _) do
-        Challenge.to_json(challenge)
+      def encode(challenge, opts) do
+        Jason.Encode.map(Challenge.to_map(challenge), opts)
+      end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(challenge, encoder) do
+          JSON.Encoder.encode(Challenge.to_map(challenge), encoder)
+        end
       end
     end
 
     @doc """
-    Converts a `Challenge` struct to JSON.
+    Converts a `Challenge` struct to a JSON-encodable map in the wire format.
     """
-    def to_json(%Challenge{
+    def to_map(%Challenge{
           algorithm: algorithm,
           challenge: challenge,
           maxnumber: maxnumber,
@@ -63,8 +71,12 @@ defmodule Altcha.V1 do
         salt: salt,
         signature: signature
       }
-      |> Jason.encode!()
     end
+
+    @doc """
+    Converts a `Challenge` struct to JSON.
+    """
+    def to_json(%Challenge{} = challenge), do: challenge |> to_map() |> Jason.encode!()
   end
 
   defmodule Payload do
@@ -80,15 +92,23 @@ defmodule Altcha.V1 do
     ]
 
     defimpl Jason.Encoder do
-      def encode(payload, _) do
-        Payload.to_json(payload)
+      def encode(payload, opts) do
+        Jason.Encode.map(Payload.to_map(payload), opts)
+      end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(payload, encoder) do
+          JSON.Encoder.encode(Payload.to_map(payload), encoder)
+        end
       end
     end
 
     @doc """
-    Converts a `Payload` struct to JSON.
+    Converts a `Payload` struct to a JSON-encodable map in the wire format.
     """
-    def to_json(%Payload{
+    def to_map(%Payload{
           algorithm: algorithm,
           challenge: challenge,
           number: number,
@@ -102,8 +122,12 @@ defmodule Altcha.V1 do
         salt: salt,
         signature: signature
       }
-      |> Jason.encode!()
     end
+
+    @doc """
+    Converts a `Payload` struct to JSON.
+    """
+    def to_json(%Payload{} = payload), do: payload |> to_map() |> Jason.encode!()
 
     @doc """
     Converts JSON to a `Payload` struct.
@@ -140,15 +164,23 @@ defmodule Altcha.V1 do
     ]
 
     defimpl Jason.Encoder do
-      def encode(signature_payload, _) do
-        ServerSignaturePayload.to_json(signature_payload)
+      def encode(signature_payload, opts) do
+        Jason.Encode.map(ServerSignaturePayload.to_map(signature_payload), opts)
+      end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(signature_payload, encoder) do
+          JSON.Encoder.encode(ServerSignaturePayload.to_map(signature_payload), encoder)
+        end
       end
     end
 
     @doc """
-    Converts a `ServerSignaturePayload` struct to JSON.
+    Converts a `ServerSignaturePayload` struct to a JSON-encodable map in the wire format.
     """
-    def to_json(%ServerSignaturePayload{
+    def to_map(%ServerSignaturePayload{
           algorithm: algorithm,
           verification_data: verification_data,
           signature: signature,
@@ -160,8 +192,13 @@ defmodule Altcha.V1 do
         signature: signature,
         verified: verified
       }
-      |> Jason.encode!()
     end
+
+    @doc """
+    Converts a `ServerSignaturePayload` struct to JSON.
+    """
+    def to_json(%ServerSignaturePayload{} = signature_payload),
+      do: signature_payload |> to_map() |> Jason.encode!()
 
     @doc """
     Converts JSON to a `ServerSignaturePayload` struct.
@@ -206,15 +243,24 @@ defmodule Altcha.V1 do
     ]
 
     defimpl Jason.Encoder do
-      def encode(verification_data, _) do
-        ServerSignatureVerificationData.to_json(verification_data)
+      def encode(verification_data, opts) do
+        Jason.Encode.map(ServerSignatureVerificationData.to_map(verification_data), opts)
+      end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(verification_data, encoder) do
+          JSON.Encoder.encode(ServerSignatureVerificationData.to_map(verification_data), encoder)
+        end
       end
     end
 
     @doc """
-    Converts a `ServerSignatureVerificationData` struct to JSON.
+    Converts a `ServerSignatureVerificationData` struct to a JSON-encodable map in the
+    wire format.
     """
-    def to_json(%ServerSignatureVerificationData{
+    def to_map(%ServerSignatureVerificationData{
           classification: classification,
           country: country,
           detected_language: detected_language,
@@ -242,8 +288,13 @@ defmodule Altcha.V1 do
         time: time,
         verified: verified
       }
-      |> Jason.encode!()
     end
+
+    @doc """
+    Converts a `ServerSignatureVerificationData` struct to JSON.
+    """
+    def to_json(%ServerSignatureVerificationData{} = verification_data),
+      do: verification_data |> to_map() |> Jason.encode!()
 
     @doc """
     Converts JSON to a `ServerSignatureVerificationData` struct.

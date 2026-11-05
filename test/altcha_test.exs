@@ -332,6 +332,65 @@ defmodule AltchaTest do
                  )
       end
     end
+
+    if Code.ensure_loaded?(JSON) do
+      describe "JSON.Encoder" do
+        test "encodes every struct to the same wire format as Jason" do
+          structs = [
+            %Challenge{
+              algorithm: :sha256,
+              challenge: "c",
+              maxnumber: 10,
+              salt: "s",
+              signature: "sig"
+            },
+            %Payload{algorithm: :sha1, challenge: "c", number: 5, salt: "s", signature: nil},
+            %ServerSignaturePayload{
+              algorithm: :sha256,
+              verification_data: "a=1",
+              signature: "sig",
+              verified: true
+            },
+            %Altcha.V1.ServerSignatureVerificationData{
+              classification: "GOOD",
+              detected_language: "en",
+              expire: 1,
+              fields: ["a"],
+              fields_hash: "h",
+              ip_address: "127.0.0.1",
+              score: 1,
+              verified: true
+            }
+          ]
+
+          for struct <- structs do
+            assert Jason.decode!(JSON.encode!(struct)) == Jason.decode!(Jason.encode!(struct))
+          end
+        end
+
+        test "a JSON-encoded payload verifies" do
+          challenge =
+            Altcha.V1.create_challenge(%ChallengeOptions{
+              algorithm: :sha256,
+              number: 123,
+              hmac_key: @valid_hmac_key
+            })
+
+          payload =
+            %Payload{
+              algorithm: challenge.algorithm,
+              challenge: challenge.challenge,
+              number: 123,
+              salt: challenge.salt,
+              signature: challenge.signature
+            }
+            |> JSON.encode!()
+            |> Base.encode64()
+
+          assert Altcha.V1.verify_solution(payload, @valid_hmac_key)
+        end
+      end
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -1182,6 +1241,48 @@ defmodule AltchaTest do
       test "returns nil for a missing or non-string payload" do
         for input <- [nil, 123, %{}] do
           assert V2.decode_payload(input) == nil
+        end
+      end
+    end
+
+    describe "JSON encoding" do
+      setup do
+        challenge =
+          V2.create_challenge(%CreateChallengeOptions{
+            algorithm: "SHA-256",
+            cost: 1,
+            expires_at: 4_102_444_800,
+            data: %{"name" => "Zoë"},
+            hmac_signature_secret: @hmac_secret
+          })
+
+        solution = V2.solve_challenge(%SolveChallengeOptions{challenge: challenge})
+        %{payload: %V2.Payload{challenge: challenge, solution: solution}}
+      end
+
+      test "Payload.to_map/1 is plain wire-format data", %{payload: payload} do
+        assert V2.Payload.to_map(payload) == Jason.decode!(Jason.encode!(payload))
+      end
+
+      test "Jason.Encoder passes options through to nested values", %{payload: payload} do
+        assert Jason.encode!(payload, escape: :unicode_safe) =~ ~r/"name":"Zo\\u00eb"/i
+      end
+
+      if Code.ensure_loaded?(JSON) do
+        test "a payload encoded with JSON matches Jason and verifies", %{payload: payload} do
+          json = JSON.encode!(payload)
+          assert Jason.decode!(json) == Jason.decode!(Jason.encode!(payload))
+
+          decoded = json |> Base.encode64() |> V2.decode_payload()
+
+          result =
+            V2.verify_solution(%VerifySolutionOptions{
+              challenge: decoded.challenge,
+              solution: decoded.solution,
+              hmac_signature_secret: @hmac_secret
+            })
+
+          assert result.verified == true
         end
       end
     end

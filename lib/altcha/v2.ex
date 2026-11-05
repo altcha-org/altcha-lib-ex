@@ -76,10 +76,41 @@ defmodule Altcha.V2 do
     ]
 
     defimpl Jason.Encoder do
-      def encode(params, _opts) do
-        Altcha.V2.parameters_to_map(params) |> Jason.encode!()
+      def encode(params, opts) do
+        Jason.Encode.map(Altcha.V2.ChallengeParameters.to_map(params), opts)
       end
     end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(params, encoder) do
+          JSON.Encoder.encode(Altcha.V2.ChallengeParameters.to_map(params), encoder)
+        end
+      end
+    end
+
+    @doc """
+    Converts `ChallengeParameters` to a JSON-encodable map in the wire format.
+    Optional parameters that are `nil` are omitted.
+    """
+    def to_map(%__MODULE__{} = params) do
+      %{
+        "algorithm" => params.algorithm,
+        "cost" => params.cost,
+        "keyLength" => params.key_length,
+        "keyPrefix" => params.key_prefix,
+        "nonce" => params.nonce,
+        "salt" => params.salt
+      }
+      |> maybe_put("data", params.data)
+      |> maybe_put("expiresAt", params.expires_at)
+      |> maybe_put("keySignature", params.key_signature)
+      |> maybe_put("memoryCost", params.memory_cost)
+      |> maybe_put("parallelism", params.parallelism)
+    end
+
+    defp maybe_put(map, _key, nil), do: map
+    defp maybe_put(map, key, value), do: Map.put(map, key, value)
   end
 
   defmodule Challenge do
@@ -94,18 +125,26 @@ defmodule Altcha.V2 do
     defstruct [:parameters, :signature]
 
     defimpl Jason.Encoder do
-      def encode(%{parameters: parameters, signature: signature}, _opts) do
-        map = %{"parameters" => Altcha.V2.parameters_to_map(parameters)}
-
-        map =
-          if signature do
-            Map.put(map, "signature", signature)
-          else
-            map
-          end
-
-        Jason.encode!(map)
+      def encode(challenge, opts) do
+        Jason.Encode.map(Altcha.V2.Challenge.to_map(challenge), opts)
       end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(challenge, encoder) do
+          JSON.Encoder.encode(Altcha.V2.Challenge.to_map(challenge), encoder)
+        end
+      end
+    end
+
+    @doc """
+    Converts a `Challenge` to a JSON-encodable map in the wire format, as served to the
+    widget. `"signature"` is omitted when `nil`.
+    """
+    def to_map(%__MODULE__{parameters: parameters, signature: signature}) do
+      map = %{"parameters" => Altcha.V2.ChallengeParameters.to_map(parameters)}
+      if signature, do: Map.put(map, "signature", signature), else: map
     end
 
     @doc """
@@ -152,11 +191,26 @@ defmodule Altcha.V2 do
     defstruct [:counter, :derived_key, :time]
 
     defimpl Jason.Encoder do
-      def encode(%{counter: counter, derived_key: derived_key, time: time}, _opts) do
-        map = %{"counter" => counter, "derivedKey" => derived_key}
-        map = if time, do: Map.put(map, "time", time), else: map
-        Jason.encode!(map)
+      def encode(solution, opts) do
+        Jason.Encode.map(Altcha.V2.Solution.to_map(solution), opts)
       end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(solution, encoder) do
+          JSON.Encoder.encode(Altcha.V2.Solution.to_map(solution), encoder)
+        end
+      end
+    end
+
+    @doc """
+    Converts a `Solution` to a JSON-encodable map in the wire format. `"time"` is
+    omitted when `nil`.
+    """
+    def to_map(%__MODULE__{counter: counter, derived_key: derived_key, time: time}) do
+      map = %{"counter" => counter, "derivedKey" => derived_key}
+      if time, do: Map.put(map, "time", time), else: map
     end
 
     def from_map(m) do
@@ -181,9 +235,28 @@ defmodule Altcha.V2 do
     defstruct [:challenge, :solution]
 
     defimpl Jason.Encoder do
-      def encode(%{challenge: challenge, solution: solution}, _opts) do
-        %{"challenge" => challenge, "solution" => solution} |> Jason.encode!()
+      def encode(payload, opts) do
+        Jason.Encode.map(Altcha.V2.Payload.to_map(payload), opts)
       end
+    end
+
+    if Code.ensure_loaded?(JSON.Encoder) do
+      defimpl JSON.Encoder do
+        def encode(payload, encoder) do
+          JSON.Encoder.encode(Altcha.V2.Payload.to_map(payload), encoder)
+        end
+      end
+    end
+
+    @doc """
+    Converts a `Payload` to a JSON-encodable map in the wire format the widget submits,
+    with the nested challenge and solution converted too.
+    """
+    def to_map(%__MODULE__{challenge: challenge, solution: solution}) do
+      %{
+        "challenge" => Altcha.V2.Challenge.to_map(challenge),
+        "solution" => Altcha.V2.Solution.to_map(solution)
+      }
     end
 
     def from_json(json) when is_binary(json) do
@@ -715,23 +788,6 @@ defmodule Altcha.V2 do
     |> IO.iodata_to_binary()
   end
 
-  @doc false
-  def parameters_to_map(%ChallengeParameters{} = params) do
-    %{
-      "algorithm" => params.algorithm,
-      "cost" => params.cost,
-      "keyLength" => params.key_length,
-      "keyPrefix" => params.key_prefix,
-      "nonce" => params.nonce,
-      "salt" => params.salt
-    }
-    |> maybe_put("data", params.data)
-    |> maybe_put("expiresAt", params.expires_at)
-    |> maybe_put("keySignature", params.key_signature)
-    |> maybe_put("memoryCost", params.memory_cost)
-    |> maybe_put("parallelism", params.parallelism)
-  end
-
   # ---------------------------------------------------------------------------
   # Private
   # ---------------------------------------------------------------------------
@@ -1033,9 +1089,6 @@ defmodule Altcha.V2 do
   defp normalize_expires_at(nil), do: nil
   defp normalize_expires_at(%DateTime{} = dt), do: DateTime.to_unix(dt, :second)
   defp normalize_expires_at(n) when is_integer(n), do: n
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp default_derive_key_fn(algorithm) do
     cond do
