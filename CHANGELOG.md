@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-11-05
+
+### Added
+
+- `JSON.Encoder` implementations (Elixir 1.18+) for the structs that implement
+  `Jason.Encoder`: V1 `Challenge`, `Payload`, `ServerSignaturePayload`,
+  `ServerSignatureVerificationData` and V2 `ChallengeParameters`, `Challenge`, `Solution`,
+  `Payload`.
+- Public `to_map/1` on the same structs, returning the wire format as plain maps for use
+  with any JSON encoder. V2 `Payload.to_map/1` converts the nested challenge and solution.
+
+### Changed
+
+- Removed the undocumented `Altcha.V2.parameters_to_map/1`; use
+  `Altcha.V2.ChallengeParameters.to_map/1`.
+
+### Fixed
+
+- `Jason.Encoder` implementations pass encoder options (e.g. `escape:`) through to
+  nested values instead of ignoring them.
+
 ## [2.2.0] - 2026-10-03
 
 ### Changed
