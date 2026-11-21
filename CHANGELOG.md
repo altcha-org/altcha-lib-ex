@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-11-21
+
+### Security
+
+- `Altcha.V1.verify_solution/3` rejects expired challenges. The expiry check computed
+  `false` for an expired challenge but did not return it, so any solved V1 challenge
+  verified after its `expires`, and could be replayed indefinitely unless used challenges
+  were tracked.
+- V1 `Payload.from_json/1`, `ServerSignaturePayload.from_json/1` and
+  `ServerSignatureVerificationData.from_json/1` no longer create atoms from JSON keys, and
+  `algorithm_from_binary/1` no longer creates atoms from unknown algorithm names. Atoms
+  are never garbage-collected, so a client could exhaust the atom table and crash the VM
+  by sending payloads with many distinct keys to `verify_solution/3` or
+  `verify_server_signature/2`. Unknown keys are ignored, and unknown algorithm names are
+  returned unchanged as strings.
+
+### Fixed
+
+- `Altcha.V1.verify_solution/3` verifies a challenge whose salt has a query but no
+  `expires`, such as one created with `params` and without `expires`. Before, it always
+  returned `false`. A present `expires` that is not a number is still rejected.
+- `ServerSignatureVerificationData.from_json/1`, and so `verify_server_signature/2`, fill
+  in `detected_language` and `ip_address` from `detectedLanguage` and `ipAddress`. They
+  were always `nil` before.
+- `ServerSignatureVerificationData.from_json/1`, and so `verify_server_signature/2`, parse
+  `score` as a float, as the other ALTCHA libraries do. Before, a fractional score such as
+  `0.5` raised `ArgumentError`, and an integer score was returned as an integer.
+- `Altcha.V1.verify_server_signature/2` returns `{false, nil}` for a malformed payload:
+  invalid base64 or JSON, JSON that is not an object, a missing `algorithm`, or an
+  `expire`, `time` or `score` that is not a number. Before, it raised. `verify_solution/3`
+  returns `false` for JSON that is not an object; before, it raised
+  `Protocol.UndefinedError`. The V1 `from_json/1` functions raise `ArgumentError` for JSON
+  that is not an object.
+
 ## [2.3.0] - 2026-11-05
 
 ### Added
