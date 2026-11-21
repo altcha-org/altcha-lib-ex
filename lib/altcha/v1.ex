@@ -351,8 +351,7 @@ defmodule Altcha.V1 do
             [{:reasons, String.split(reasons, ",")}]
 
           {"score", n} ->
-            value = if is_integer(n), do: n, else: String.to_integer(n)
-            [{:score, value}]
+            [{:score, parse_score(n)}]
 
           {"time", n} ->
             value = if is_integer(n), do: n, else: String.to_integer(n)
@@ -366,6 +365,16 @@ defmodule Altcha.V1 do
         end)
 
       struct(__MODULE__, map)
+    end
+
+    # Scores are fractional (e.g. "0.5"); like the other ports, always return a float.
+    defp parse_score(n) when is_number(n), do: n / 1
+
+    defp parse_score(n) when is_binary(n) do
+      case Float.parse(n) do
+        {value, ""} -> value
+        _ -> raise ArgumentError, "invalid score: #{inspect(n)}"
+      end
     end
   end
 

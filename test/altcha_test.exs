@@ -437,6 +437,25 @@ defmodule AltchaTest do
         assert verification_data.ip_address == "127.0.0.1"
         refute_atom_exists(key)
       end
+
+      test "parses score as a float" do
+        for {score, expected} <- [{"0.5", 0.5}, {"1", 1.0}] do
+          data = "verified=true&score=#{score}"
+
+          payload = %ServerSignaturePayload{
+            algorithm: :sha256,
+            verification_data: data,
+            signature:
+              Altcha.V1.hmac_hex(Altcha.V1.hash(data, :sha256), :sha256, @valid_hmac_key),
+            verified: true
+          }
+
+          assert {true, verification_data} =
+                   Altcha.V1.verify_server_signature(payload, @valid_hmac_key)
+
+          assert verification_data.score === expected
+        end
+      end
     end
 
     describe "verify_fields_hash/4" do
