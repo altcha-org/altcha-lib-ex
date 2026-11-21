@@ -19,6 +19,24 @@ defmodule AltchaTest do
 
     @valid_hmac_key "test_key"
 
+    defp unknown_key, do: "altcha_test_unknown_#{System.unique_integer([:positive])}"
+
+    defp refute_atom_exists(name) do
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    defp solution_payload(%Challenge{} = challenge, number) do
+      %Payload{
+        algorithm: challenge.algorithm,
+        challenge: challenge.challenge,
+        number: number,
+        salt: challenge.salt,
+        signature: challenge.signature
+      }
+    end
+
+    defp now, do: DateTime.to_unix(DateTime.utc_now(), :second)
+
     describe "hashing functions" do
       test "hash/2 with sha1 algorithm" do
         data = "test"
@@ -126,6 +144,21 @@ defmodule AltchaTest do
         assert payload.salt == "salt"
         assert payload.signature == "signature"
       end
+
+      test "from_json/1 ignores unknown keys and algorithms without creating atoms" do
+        key = unknown_key()
+        algorithm = unknown_key()
+
+        payload =
+          %{"algorithm" => algorithm, "number" => 42, key => 1}
+          |> Jason.encode!()
+          |> Payload.from_json()
+
+        assert payload.algorithm == algorithm
+        assert payload.number == 42
+        refute_atom_exists(key)
+        refute_atom_exists(algorithm)
+      end
     end
 
     describe "ServerSignaturePayload module" do
@@ -165,6 +198,18 @@ defmodule AltchaTest do
         assert payload.verification_data == "data"
         assert payload.signature == "signature"
         assert payload.verified == true
+      end
+
+      test "from_json/1 ignores unknown keys without creating atoms" do
+        key = unknown_key()
+
+        payload =
+          %{"algorithm" => "SHA-256", "verified" => true, key => 1}
+          |> Jason.encode!()
+          |> ServerSignaturePayload.from_json()
+
+        assert payload.verified == true
+        refute_atom_exists(key)
       end
     end
 
@@ -254,6 +299,90 @@ defmodule AltchaTest do
 
         refute Altcha.V1.verify_solution(payload, @valid_hmac_key)
       end
+
+      test "returns false for an expired challenge" do
+        for params <- [nil, %{"user" => "alice"}] do
+          challenge =
+            Altcha.V1.create_challenge(%ChallengeOptions{
+              hmac_key: @valid_hmac_key,
+              number: 123,
+              expires: now() - 1,
+              params: params
+            })
+
+          payload = solution_payload(challenge, 123)
+
+          refute Altcha.V1.verify_solution(payload, @valid_hmac_key)
+
+          refute Altcha.V1.verify_solution(
+                   Base.encode64(Payload.to_json(payload)),
+                   @valid_hmac_key
+                 )
+
+          assert Altcha.V1.verify_solution(payload, @valid_hmac_key, false)
+        end
+      end
+
+      test "returns true for an unexpired challenge" do
+        challenge =
+          Altcha.V1.create_challenge(%ChallengeOptions{
+            hmac_key: @valid_hmac_key,
+            number: 123,
+            expires: now() + 600,
+            params: %{"user" => "alice"}
+          })
+
+        assert Altcha.V1.verify_solution(solution_payload(challenge, 123), @valid_hmac_key)
+      end
+
+      test "returns true for a challenge with params and no expires" do
+        challenge =
+          Altcha.V1.create_challenge(%ChallengeOptions{
+            hmac_key: @valid_hmac_key,
+            number: 123,
+            params: %{"user" => "alice"}
+          })
+
+        assert Altcha.V1.verify_solution(solution_payload(challenge, 123), @valid_hmac_key)
+      end
+
+      test "returns false for a non-numeric expires" do
+        challenge =
+          Altcha.V1.create_challenge(%ChallengeOptions{
+            hmac_key: @valid_hmac_key,
+            number: 123,
+            salt: "abcd?expires=never"
+          })
+
+        refute Altcha.V1.verify_solution(solution_payload(challenge, 123), @valid_hmac_key)
+      end
+
+      test "returns false when the salt tail is moved into a string number" do
+        challenge =
+          Altcha.V1.create_challenge(%ChallengeOptions{
+            hmac_key: @valid_hmac_key,
+            number: 123,
+            expires: now() - 300,
+            # Map keys are sorted, so "action" comes before "expires".
+            params: %{"action" => "login"}
+          })
+
+        body = String.trim_trailing(challenge.salt, "&")
+        {cut, _} = :binary.match(body, "&expires=")
+
+        payload =
+          %{
+            "algorithm" => "SHA-256",
+            "challenge" => challenge.challenge,
+            "number" => binary_part(body, cut + 1, byte_size(body) - cut - 1) <> "&123",
+            "salt" => binary_part(body, 0, cut),
+            "signature" => challenge.signature
+          }
+          |> Jason.encode!()
+          |> Base.encode64()
+
+        refute Altcha.V1.verify_solution(payload, @valid_hmac_key)
+      end
     end
 
     describe "verify_server_signature/2" do
@@ -288,6 +417,25 @@ defmodule AltchaTest do
           |> Base.encode64()
 
         assert {false, _} = Altcha.V1.verify_server_signature(invalid_payload, @valid_hmac_key)
+      end
+
+      test "maps verification data fields without creating atoms" do
+        key = unknown_key()
+        data = "verified=true&detectedLanguage=en&ipAddress=127.0.0.1&#{key}=1"
+
+        payload = %ServerSignaturePayload{
+          algorithm: :sha256,
+          verification_data: data,
+          signature: Altcha.V1.hmac_hex(Altcha.V1.hash(data, :sha256), :sha256, @valid_hmac_key),
+          verified: true
+        }
+
+        assert {true, verification_data} =
+                 Altcha.V1.verify_server_signature(payload, @valid_hmac_key)
+
+        assert verification_data.detected_language == "en"
+        assert verification_data.ip_address == "127.0.0.1"
+        refute_atom_exists(key)
       end
     end
 

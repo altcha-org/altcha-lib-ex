@@ -130,22 +130,33 @@ defmodule Altcha.V1 do
     def to_json(%Payload{} = payload), do: payload |> to_map() |> Jason.encode!()
 
     @doc """
-    Converts JSON to a `Payload` struct.
+    Converts JSON to a `Payload` struct. Unknown keys are ignored.
     """
     def from_json(json) do
       map =
         json
         |> Jason.decode!()
-        |> Enum.map(fn
+        # Map known keys explicitly: atoms are never garbage-collected, so
+        # creating them from client-supplied keys would exhaust the atom table.
+        |> Enum.flat_map(fn
           {"algorithm", alg} ->
-            {:algorithm, Altcha.V1.algorithm_from_binary(alg)}
+            [{:algorithm, Altcha.V1.algorithm_from_binary(alg)}]
 
           {"number", n} ->
             value = if is_integer(n), do: n, else: String.to_integer(n)
-            {:number, value}
+            [{:number, value}]
 
-          {k, v} ->
-            {String.to_atom(k), v}
+          {"challenge", v} ->
+            [{:challenge, v}]
+
+          {"salt", v} ->
+            [{:salt, v}]
+
+          {"signature", v} ->
+            [{:signature, v}]
+
+          _ ->
+            []
         end)
 
       struct(__MODULE__, map)
@@ -201,23 +212,29 @@ defmodule Altcha.V1 do
       do: signature_payload |> to_map() |> Jason.encode!()
 
     @doc """
-    Converts JSON to a `ServerSignaturePayload` struct.
+    Converts JSON to a `ServerSignaturePayload` struct. Unknown keys are ignored.
     """
     def from_json(json) do
       map =
         json
         |> Jason.decode!()
-        |> Enum.map(fn
+        # Map known keys explicitly; see `Payload.from_json/1`.
+        |> Enum.flat_map(fn
           {"algorithm", alg} ->
-            {:algorithm, Altcha.V1.algorithm_from_binary(alg)}
+            [{:algorithm, Altcha.V1.algorithm_from_binary(alg)}]
 
           {"verificationData", v} ->
-            {:verification_data, v}
+            [{:verification_data, v}]
 
-          {k, v} ->
-            {String.to_atom(k), v}
+          {"signature", v} ->
+            [{:signature, v}]
+
+          {"verified", v} ->
+            [{:verified, v}]
+
+          _ ->
+            []
         end)
-        |> Enum.into(%{})
 
       struct(__MODULE__, map)
     end
@@ -297,39 +314,55 @@ defmodule Altcha.V1 do
       do: verification_data |> to_map() |> Jason.encode!()
 
     @doc """
-    Converts JSON to a `ServerSignatureVerificationData` struct.
+    Converts JSON to a `ServerSignatureVerificationData` struct. Unknown keys are ignored.
     """
     def from_json(json) do
       map =
         json
         |> Jason.decode!()
-        |> Enum.map(fn
+        # Map known keys explicitly; see `Payload.from_json/1`.
+        |> Enum.flat_map(fn
+          {"classification", v} ->
+            [{:classification, v}]
+
+          {"country", v} ->
+            [{:country, v}]
+
+          {"detectedLanguage", v} ->
+            [{:detected_language, v}]
+
+          {"email", v} ->
+            [{:email, v}]
+
           {"expire", n} ->
             value = if is_integer(n), do: n, else: String.to_integer(n)
-            {:expire, value}
+            [{:expire, value}]
 
           {"fields", fields} ->
-            {:fields, String.split(fields, ",")}
+            [{:fields, String.split(fields, ",")}]
 
           {"fieldsHash", fields_hash} ->
-            {:fields_hash, fields_hash}
+            [{:fields_hash, fields_hash}]
+
+          {"ipAddress", v} ->
+            [{:ip_address, v}]
 
           {"reasons", reasons} ->
-            {:reasons, String.split(reasons, ",")}
+            [{:reasons, String.split(reasons, ",")}]
 
           {"score", n} ->
             value = if is_integer(n), do: n, else: String.to_integer(n)
-            {:score, value}
+            [{:score, value}]
 
           {"time", n} ->
             value = if is_integer(n), do: n, else: String.to_integer(n)
-            {:time, value}
+            [{:time, value}]
 
           {"verified", verified} ->
-            {:verified, verified === "true"}
+            [{:verified, verified === "true"}]
 
-          {k, v} ->
-            {String.to_atom(k), v}
+          _ ->
+            []
         end)
 
       struct(__MODULE__, map)
@@ -359,14 +392,15 @@ defmodule Altcha.V1 do
 
   @spec algorithm_from_binary(any()) :: any()
   @doc """
-  Converts an algorithm name from binary format to an atom.
+  Converts an algorithm name from binary format to an atom. Unknown names are returned
+  unchanged, so they never create atoms.
   """
   def algorithm_from_binary(algorithm) do
     case algorithm do
       @algorithm_sha -> :sha
       @algorithm_sha256 -> :sha256
       @algorithm_sha512 -> :sha512
-      _ -> if is_atom(algorithm), do: algorithm, else: String.to_atom(algorithm)
+      _ -> algorithm
     end
   end
 
@@ -496,19 +530,7 @@ defmodule Altcha.V1 do
         _ -> Payload.from_json(Base.decode64!(payload))
       end
 
-    if payload_is_valid?(payload) do
-      if check_expires and String.contains?(payload.salt, "?") do
-        expires =
-          payload.salt
-          |> String.split("?")
-          |> List.last()
-          |> URI.decode_query()
-          |> Map.get("expires")
-          |> String.to_integer()
-
-        if DateTime.to_unix(DateTime.utc_now(), :second) > expires, do: false
-      end
-
+    if payload_is_valid?(payload) and not (check_expires and expired?(payload)) do
       challenge_options = %ChallengeOptions{
         algorithm: payload.algorithm,
         hmac_key: hmac_key,
@@ -620,6 +642,17 @@ defmodule Altcha.V1 do
        do: true
 
   defp payload_is_valid?(_), do: false
+
+  # A salt without "expires" has no expiry. A non-numeric "expires" raises
+  # ArgumentError, which verify_solution/3 turns into false.
+  defp expired?(%Payload{salt: salt} = payload) do
+    with true <- String.contains?(salt, "?"),
+         {:ok, expires} <- Map.fetch(extract_params(payload), "expires") do
+      DateTime.to_unix(DateTime.utc_now(), :second) > String.to_integer(expires)
+    else
+      _ -> false
+    end
+  end
 
   defp server_verification_payload_is_valid?(%{
          algorithm: algorithm,
