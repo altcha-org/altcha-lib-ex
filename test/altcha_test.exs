@@ -383,6 +383,12 @@ defmodule AltchaTest do
 
         refute Altcha.V1.verify_solution(payload, @valid_hmac_key)
       end
+
+      test "returns false for a payload that is not a JSON object" do
+        for json <- [~s|"x"|, "1", "[1]"] do
+          refute Altcha.V1.verify_solution(Base.encode64(json), @valid_hmac_key)
+        end
+      end
     end
 
     describe "verify_server_signature/2" do
@@ -417,6 +423,34 @@ defmodule AltchaTest do
           |> Base.encode64()
 
         assert {false, _} = Altcha.V1.verify_server_signature(invalid_payload, @valid_hmac_key)
+      end
+
+      test "returns {false, nil} for a malformed payload" do
+        for payload <- [
+              "%%%",
+              Base.encode64("not json"),
+              Base.encode64(~s|"x"|),
+              Base.encode64("1"),
+              Base.encode64(
+                ~s|{"verificationData":"verified=true","signature":"s","verified":true}|
+              )
+            ] do
+          assert {false, nil} = Altcha.V1.verify_server_signature(payload, @valid_hmac_key)
+        end
+      end
+
+      test "returns {false, nil} for signed verification data with invalid numbers" do
+        for data <- ["verified=true&expire=soon", "verified=true&time=x", "verified=true&score=x"] do
+          payload = %ServerSignaturePayload{
+            algorithm: :sha256,
+            verification_data: data,
+            signature:
+              Altcha.V1.hmac_hex(Altcha.V1.hash(data, :sha256), :sha256, @valid_hmac_key),
+            verified: true
+          }
+
+          assert {false, nil} = Altcha.V1.verify_server_signature(payload, @valid_hmac_key)
+        end
       end
 
       test "maps verification data fields without creating atoms" do

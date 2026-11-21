@@ -130,12 +130,13 @@ defmodule Altcha.V1 do
     def to_json(%Payload{} = payload), do: payload |> to_map() |> Jason.encode!()
 
     @doc """
-    Converts JSON to a `Payload` struct. Unknown keys are ignored.
+    Converts JSON to a `Payload` struct. Unknown keys are ignored. Raises `ArgumentError`
+    if the JSON is not an object.
     """
     def from_json(json) do
       map =
         json
-        |> Jason.decode!()
+        |> Altcha.V1.decode_json_object!()
         # Map known keys explicitly: atoms are never garbage-collected, so
         # creating them from client-supplied keys would exhaust the atom table.
         |> Enum.flat_map(fn
@@ -212,12 +213,13 @@ defmodule Altcha.V1 do
       do: signature_payload |> to_map() |> Jason.encode!()
 
     @doc """
-    Converts JSON to a `ServerSignaturePayload` struct. Unknown keys are ignored.
+    Converts JSON to a `ServerSignaturePayload` struct. Unknown keys are ignored. Raises
+    `ArgumentError` if the JSON is not an object.
     """
     def from_json(json) do
       map =
         json
-        |> Jason.decode!()
+        |> Altcha.V1.decode_json_object!()
         # Map known keys explicitly; see `Payload.from_json/1`.
         |> Enum.flat_map(fn
           {"algorithm", alg} ->
@@ -315,11 +317,12 @@ defmodule Altcha.V1 do
 
     @doc """
     Converts JSON to a `ServerSignatureVerificationData` struct. Unknown keys are ignored.
+    Raises `ArgumentError` if the JSON is not an object.
     """
     def from_json(json) do
       map =
         json
-        |> Jason.decode!()
+        |> Altcha.V1.decode_json_object!()
         # Map known keys explicitly; see `Payload.from_json/1`.
         |> Enum.flat_map(fn
           {"classification", v} ->
@@ -580,7 +583,8 @@ defmodule Altcha.V1 do
   end
 
   @doc """
-  Verifies the server signature using the payload and HMAC key.
+  Verifies the server signature using the payload and HMAC key. Returns `{false, nil}` for
+  a malformed payload.
   """
   def verify_server_signature(payload, hmac_key) do
     payload =
@@ -610,6 +614,17 @@ defmodule Altcha.V1 do
       {is_verified, verification_data}
     else
       {false, nil}
+    end
+  rescue
+    ArgumentError -> {false, nil}
+    Jason.DecodeError -> {false, nil}
+  end
+
+  @doc false
+  def decode_json_object!(json) do
+    case Jason.decode!(json) do
+      %{} = map -> map
+      _ -> raise ArgumentError, "expected a JSON object"
     end
   end
 
